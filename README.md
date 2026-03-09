@@ -44,14 +44,14 @@ SERVER_NAME — название сервера (например, VPS, HomeServ
    ```bash
    sudo visudo -f /etc/sudoers.d/bot
 Добавьте в него следующую строку (замените username на имя вашего пользователя):
-text
+```text
    username ALL=(ALL) NOPASSWD: ALL
+```
 
 5. Запуск бота
    ```bash
    python bot.py
 Если всё настроено правильно, бот запустится и будет отвечать на команды в Telegram.
-
 
 Чтобы бот запускался автоматически после перезагрузки сервера, создайте systemd-сервис.
 
@@ -68,9 +68,9 @@ After=network.target
 
 [Service]
 Type=simple
-User=username
-WorkingDirectory=/home/username/server-bot
-ExecStart=/home/username/server-bot/venv/bin/python /home/username/server-bot/bot.py
+User=username # Исправьте username на имя пользователя
+WorkingDirectory=/home/username/server-bot # Исправьте username на имя пользователя
+ExecStart=/home/username/server-bot/venv/bin/python /home/username/server-bot/bot.py # Исправьте username на имя пользователя
 Restart=always
 RestartSec=10
 
@@ -85,6 +85,7 @@ WantedBy=multi-user.target
    sudo systemctl status server-bot
    
 Автоматические уведомления об обновлениях
+
 Бот может присылать ежедневный отчёт о том, были ли установлены обновления.
 
 1. Настройка автоматических обновлений системы
@@ -95,6 +96,7 @@ WantedBy=multi-user.target
    sudo apt install unattended-upgrades -y
    sudo systemctl enable --now unattended-upgrades
 2. Добавление задачи в crontab
+3. 
 Откройте редактор cron:
 
    ```bash
@@ -111,6 +113,7 @@ WantedBy=multi-user.target
 ```
 
 Команды бота
+
 /start — главное меню
 
 /status — информация о состоянии сервера
@@ -128,6 +131,7 @@ WantedBy=multi-user.target
 /help — список доступных команд
 
 Безопасность
+
 Доступ к боту ограничен одним администратором по Telegram ID
 
 Все опасные действия (обновление, перезагрузка) требуют подтверждения
