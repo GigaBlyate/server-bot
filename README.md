@@ -15,12 +15,11 @@ Telegram бот для управления Linux сервером. Позвол
 Проверка работоспособности команд и прав sudo
 
 Установка
-1. Клонирование репозитория
-bash
-git clone https://github.com/GigaBlyate/server-bot.git
-cd server-bot
+1. Клонируйте репозиторий:
+   ```bash
+   git clone https://github.com/GigaBlyate/server-bot.git
 2. Создание виртуального окружения и установка зависимостей
-bash
+      bash
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
