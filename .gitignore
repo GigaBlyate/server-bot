@@ -1,0 +1,18 @@
+# Секреты
+config.py
+.env
+
+# Виртуальное окружение
+venv/
+__pycache__/
+*.pyc
+
+# Логи
+*.log
+update-notifier.log
+
+# Системные файлы
+.DS_Store
+*.swp
+*.swo
+config.py

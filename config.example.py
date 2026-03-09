@@ -1,0 +1,4 @@
+# Конфигурация бота
+TOKEN = "BOT_TOKEN"
+ADMIN_CHAT_ID = "CHAT_ID"
+SERVER_NAME = "SERVER_NAME"
