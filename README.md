@@ -96,16 +96,14 @@ WantedBy=multi-user.target
    sudo apt install unattended-upgrades -y
    sudo systemctl enable --now unattended-upgrades
 2. Добавление задачи в crontab
-3. 
-Откройте редактор cron:
-
+   Откройте редактор cron:
    ```bash
    crontab -e
 Добавьте следующую строку для запуска скрипта уведомлений каждый день в 5:30 утра:
-
 ```text
 30 5 * * * /home/username/server-bot/update-notifier.sh >> /home/username/server-bot/update-notifier.log 2>&1
 ```
+
 Убедитесь, что путь к скрипту указан верно, а сам скрипт имеет права на выполнение:
 
    ```bash
@@ -113,7 +111,6 @@ WantedBy=multi-user.target
 ```
 
 Команды бота
-
 /start — главное меню
 
 /status — информация о состоянии сервера
@@ -131,7 +128,6 @@ WantedBy=multi-user.target
 /help — список доступных команд
 
 Безопасность
-
 Доступ к боту ограничен одним администратором по Telegram ID
 
 Все опасные действия (обновление, перезагрузка) требуют подтверждения
@@ -139,3 +135,7 @@ WantedBy=multi-user.target
 Конфигурационный файл с токеном не включён в репозиторий
 
 Скрипты уведомлений не содержат токен — он читается из config.py
+
+
+
+   
