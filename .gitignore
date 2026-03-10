@@ -1,11 +1,21 @@
-# Секреты
+# Виртуальное окружение
+venv/
+env/
+ENV/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Конфигурация с секретами
 config.py
 .env
 
-# Виртуальное окружение
-venv/
-__pycache__/
-*.pyc
+# Базы данных
+*.db
+*.db-journal
 
 # Логи
 *.log
@@ -13,6 +23,11 @@ update-notifier.log
 
 # Системные файлы
 .DS_Store
+Thumbs.db
 *.swp
 *.swo
-config.py
+*~
+
+# Бэкапы
+*.backup
+*.backup_*
