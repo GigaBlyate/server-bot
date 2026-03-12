@@ -15,6 +15,15 @@ Telegram бот для управления Linux сервером.
 
 ## 🚀 Установка
 
+Сначала проверяем, установлен ли Git
+```bash
+git --version
+```
+Если показал какую-то версию, то переходим к установке, если нет, то устанавливаем:
+```bash
+sudo apt install git -y
+```
+
 1. Клонируйте репозиторий:
 ```bash
 git clone https://github.com/GigaBlyate/server-bot.git
