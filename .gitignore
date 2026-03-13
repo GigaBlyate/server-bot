@@ -1,33 +1,69 @@
+# Игнорировать конкретный файл
+restart.sh
+
+# Конфигурация с реальными данными
+config.py
+config.local.py
+
+# Базы данных
+*.db
+vps_data.db
+*.sqlite
+*.sqlite3
+
+# Логи
+*.log
+bot.log
+backup.log
+*.log.*
+
+# JSON данные
+high_cpu_processes.json
+*.json
+!requirements.json  # если есть такие файлы шаблонов
+
 # Виртуальное окружение
 venv/
 env/
 ENV/
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Конфигурация с секретами
-config.py
 .env
+.venv
+pythonenv*
 
-# Базы данных
-*.db
-*.db-journal
+# Кэш Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
 
-# Логи
-*.log
-update-notifier.log
-
-# Системные файлы
-.DS_Store
-Thumbs.db
+# Файлы редакторов
+.vscode/
+.idea/
 *.swp
 *.swo
 *~
+.DS_Store
+Thumbs.db
 
 # Бэкапы
+backups/
 *.backup
-*.backup_*
+*.backup.*
+*.bak
+
+# Временные файлы
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Системные файлы
+.python-version
+pip-log.txt
+pip-delete-this-directory.txt
+restart.sh
