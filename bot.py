@@ -22,7 +22,7 @@ PROCESS_LOG_PATH = os.path.join(os.path.dirname(__file__), 'high_cpu_processes.j
 ADMIN_ID = str(config.ADMIN_CHAT_ID)
 
 # Версия бота и ссылка на GitHub
-BOT_VERSION = "1.0.1"
+BOT_VERSION = "1.0.2"
 GITHUB_REPO = "GigaBlyate/server-bot"  # замените на ваш репозиторий
 GITHUB_RAW_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/version.txt"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
