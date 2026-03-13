@@ -1,115 +1,33 @@
+```markdpwn
 # 🤖 Server Management Bot
 
 Telegram бот для управления Linux сервером.
 
 ## 📋 Возможности
 
-- 📊 **Мониторинг сервера** - CPU, RAM, диск, аптайм
-- 🔄 **Обновление системы** - проверка и установка обновлений
-- 🏓 **Ping** - проверка доступности хостов
-- 🔐 **Генератор паролей** - создание безопасных паролей
-- 🔄 **Перезагрузка** - удаленная перезагрузка сервера
-- :up **Контроль сроков аренды** - бот напомнит заранее о скором завершении аренды сервера
+- 📊 **Мониторинг сервера** — CPU, RAM, диск, аптайм, нагрузка
+- 🔄 **Обновление системы** — проверка и установка обновлений
+- 🏓 **Ping диагностика** — проверка доступности хостов
+- 🔐 **Генератор паролей** — создание безопасных паролей
+- 🔄 **Перезагрузка** — удаленная перезагрузка сервера
+- 📦 **Контроль VPS аренды** — отслеживание сроков и напоминания об оплате
+- ⚠️ **Мониторинг процессов** — уведомления о высокой нагрузке CPU
+- ℹ️ **Информация о сервере** — детальные характеристики железа
+- 🤖 **Проверка обновлений** — автоуведомления о новых версиях бота
 
-- 📘 **[Подробная инструкция для пользователей](INSTRUCTION.md)**
-
-## 🚀 Установка
-
-Сначала проверяем, установлен ли Git
-```bash
-git --version
-```
-Если показал какую-то версию, то переходим к установке, если нет, то устанавливаем:
-```bash
-sudo apt install git -y
 ```
 
-1. Клонируйте репозиторий:
-```bash
-git clone https://github.com/GigaBlyate/server-bot.git
-cd server-bot
-```
+# 📚 Документация
+Подробные инструкции по установке, настройке и использованию доступны в Wiki:
 
-2. Создание виртуального окружения:
-```bash
-python3 -m venv venv
-source venv/bin/activate
-```
-3. Установка зависимостей:
-```bash
-pip install -r requirements.txt
-```
-4. Настройка конфигурации:
-```bash
-cp config.example.py config.py
-nano config.py
-```
-Укажите:
+Установка — как установить бота с нуля
 
-TOKEN — токен от @BotFather
+Настройка — конфигурация и параметры
 
-ADMIN_CHAT_ID — ваш Telegram ID (узнать у @userinfobot)
+Команды — все команды бота
 
-SERVER_NAME — название вашего сервера
+VPS менеджер — управление арендой серверов
 
-5. Настройка прав sudo:
-```bash
-sudo visudo -f /etc/sudoers.d/bot
-```
-Добавьте строку (замените `username` на ваше имя пользователя):
-```text
-username ALL=(ALL) NOPASSWD: ALL
-```
-6. Запуск бота:
-```bash
-python bot.py
-```
-Автоматический запуск (systemd) что бы бот автоматически запускался после перезагрузки сервера:
-```bash
-sudo nano /etc/systemd/system/server-bot.service
-```
-Вставить в этот файл:
-```text
-[Unit]
-Description=Server Management Bot
-After=network.target
+Мониторинг процессов — отслеживание нагрузки CPU
 
-[Service]
-Type=simple
-User=YOUR_USERNAME
-WorkingDirectory=/home/YOUR_USERNAME/server-bot
-ExecStart=/home/YOUR_USERNAME/server-bot/venv/bin/python /home/YOUR_USERNAME/server-bot/bot.py
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-Затем:
-```bash
-sudo systemctl daemon-reload
-sudo systemctl start server-bot
-sudo systemctl enable server-bot
-```
-Автоматические уведомления об обновлениях
-```bash
-# Настройка прав на чтение лога
-sudo chmod 644 /var/log/unattended-upgrades/unattended-upgrades.log
-sudo chmod 755 /var/log/unattended-upgrades/
-
-# Добавление в crontab
-crontab -e
-```
-Добавьте строку (числа 30 и 5 это время по серверу. Сейчас стоит 5:30 утра. Если хотите другое время, то меняйте эти числа): 
-```text
-30 5 * * * /home/YOUR_USERNAME/server-bot/update-notifier.sh >> /home/YOUR_USERNAME/server-bot/update-notifier.log 2>&1
-```
-**Безопасность**
-Доступ только по Telegram ID
-Подтверждение опасных действий
-
-Для корректной работы команды /ping требуется установить системную утилиту след. командой:
-```bash
-sudo apt install iputils-ping -y
-```
-
+FAQ — частые вопросы и решения
