@@ -1063,8 +1063,15 @@ async def get_system_diagnostic():
             result += "💡 <b>Рекомендации:</b>\n"
             if cpu_percent > 80:
                 result += "• 🔴 Высокая нагрузка CPU – проверьте процессы выше\n"
-            if mem.percent > 85:
-                result += "• 🔴 Мало свободной RAM – закройте приложения или добавьте swap\n"
+            # Проверяем, что mem - правильный объект
+            try:
+                if mem.percent > 85:
+                    result += "• 🔴 Мало свободной RAM – закройте приложения или добавьте swap\n"
+            except AttributeError:
+                mem_check = psutil.virtual_memory()
+                if mem_check.percent > 85:
+                    result += "• 🔴 Мало свободной RAM – закройте приложения или добавьте swap\n"
+            
             disk_usage = psutil.disk_usage('/')
             if disk_usage.percent > 85:
                 result += "• 🔴 Мало места на диске – очистите временные файлы\n"
