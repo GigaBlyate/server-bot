@@ -1,11 +1,11 @@
 #!/bin/bash
 
 # Конфигурация
-BOT_TOKEN=$(grep TOKEN /home/gigablyate/server-bot/config.py | cut -d '"' -f2)
-CHAT_ID=$(grep ADMIN_CHAT_ID /home/gigablyate/server-bot/config.py | cut -d '"' -f2)
-SERVER_NAME=$(grep SERVER_NAME /home/gigablyate/server-bot/config.py | cut -d '"' -f2)
+BOT_TOKEN=$(grep TOKEN /home/USERNAME/server-bot/config.py | cut -d '"' -f2)
+CHAT_ID=$(grep ADMIN_CHAT_ID /home/USERNAME/server-bot/config.py | cut -d '"' -f2)
+SERVER_NAME=$(grep SERVER_NAME /home/USERNAME/server-bot/config.py | cut -d '"' -f2)
 LOG_FILE="/var/log/unattended-upgrades/unattended-upgrades.log"
-NOTIFIER_LOG="/home/gigablyate/server-bot/update-notifier.log"
+NOTIFIER_LOG="/home/USERNAME/server-bot/update-notifier.log"
 
 # Функция логирования
 log() {
