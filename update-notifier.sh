@@ -13,7 +13,7 @@ NOTIFIER_LOG="$SCRIPT_DIR/update-notifier.log"
 
 # Функция логирования
 log() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S'): $1" >> $NOTIFIER_LOG
+    echo "$(date '+%Y-%m-%d %H:%M:%S'): $1" >> "$NOTIFIER_LOG"
 }
 
 # Функция отправки в Telegram
@@ -42,53 +42,74 @@ if [ ! -r "$LOG_FILE" ]; then
     exit 1
 fi
 
-# Получаем последние 100 строк лога
-LATEST_LOGS=$(sudo tail -100 "$LOG_FILE" 2>/dev/null)
+# Текущая дата для сравнения (формат: YYYY-MM-DD)
+TODAY=$(date '+%Y-%m-%d')
+log "Текущая дата: $TODAY"
 
-if [ $? -ne 0 ]; then
-    log "ОШИБКА: Не удалось прочитать файл лога"
-    exit 1
+# Извлекаем записи лога за сегодня (строки, начинающиеся с TODAY)
+# Используем sudo для чтения, если необходимо
+TODAY_LOG=$(sudo awk -v today="$TODAY" '$0 ~ "^" today {print}' "$LOG_FILE" 2>/dev/null)
+
+if [ -z "$TODAY_LOG" ]; then
+    log "Записей за сегодня не найдено. Система актуальна."
+    MESSAGE="🖥️ <b>$SERVER_NAME</b> - Отчёт об обновлениях
+━━━━━━━━━━━━━━━━━━━━━
+📅 Дата: $(date '+%Y-%m-%d %H:%M:%S')
+
+✅ Система актуальна. Обновлений не найдено."
+    send_telegram "$MESSAGE"
+    exit 0
 fi
 
-log "Файл лога успешно прочитан"
+# Проверяем, были ли установлены обновления (наличие строки "All upgrades installed")
+if echo "$TODAY_LOG" | grep -q "All upgrades installed"; then
+    log "Найдены установленные обновления за сегодня."
 
-# Ищем установленные обновления (по разным паттернам)
-if echo "$LATEST_LOGS" | grep -q "All upgrades installed"; then
-    log "Найдены установленные обновления!"
-    
-    # Получаем дату последнего обновления
-    UPDATE_LINE=$(echo "$LATEST_LOGS" | grep "All upgrades installed" | tail -1)
-    UPDATE_DATE=$(echo "$UPDATE_LINE" | cut -d',' -f1)
-    
-    # Получаем список обновленных пакетов
-    UPGRADED=$(echo "$LATEST_LOGS" | grep "Packages that will be upgraded" | tail -1 | cut -d':' -f2- | cut -c1-150)
-    REMOVED=$(echo "$LATEST_LOGS" | grep "Packages that were successfully auto-removed" | tail -1 | cut -d':' -f2- | cut -c1-150)
-    
+    # Собираем список обновлённых пакетов
+    # Сначала ищем строку "Packages that will be upgraded:" и берём следующую строку с пакетами
+    UPGRADED=$(echo "$TODAY_LOG" | grep -A1 "Packages that will be upgraded:" | tail -1 | sed 's/^[[:space:]]*//' | cut -c1-150)
+    # Если не нашли, возможно пакеты перечислены в той же строке после двоеточия
+    if [ -z "$UPGRADED" ] || [ "$UPGRADED" = "Packages that will be upgraded:" ]; then
+        UPGRADED=$(echo "$TODAY_LOG" | grep "Packages that will be upgraded:" | cut -d':' -f2- | sed 's/^[[:space:]]*//' | cut -c1-150)
+    fi
+
+    # Собираем список автоматически удалённых пакетов
+    REMOVED=$(echo "$TODAY_LOG" | grep -A1 "Packages that were successfully auto-removed:" | tail -1 | sed 's/^[[:space:]]*//' | cut -c1-150)
+    if [ -z "$REMOVED" ] || [ "$REMOVED" = "Packages that were successfully auto-removed:" ]; then
+        REMOVED=$(echo "$TODAY_LOG" | grep "Packages that were successfully auto-removed:" | cut -d':' -f2- | sed 's/^[[:space:]]*//' | cut -c1-150)
+    fi
+
     # Формируем сообщение
     MESSAGE="🖥️ <b>$SERVER_NAME</b> - Отчёт об обновлениях
 ━━━━━━━━━━━━━━━━━━━━━
-📅 Дата: $UPDATE_DATE
+📅 Дата: $(date '+%Y-%m-%d %H:%M:%S')
 
 ✅ Обновления успешно установлены."
 
-    if [ ! -z "$UPGRADED" ]; then
-        MESSAGE="$MESSAGE\n\n📦 <b>Обновлено:</b>$UPGRADED"
+    if [ -n "$UPGRADED" ]; then
+        MESSAGE="$MESSAGE\n\n📦 <b>Обновлено:</b> $UPGRADED"
     fi
-    
-    if [ ! -z "$REMOVED" ]; then
-        MESSAGE="$MESSAGE\n\n🗑️ <b>Удалено:</b>$REMOVED"
+
+    if [ -n "$REMOVED" ]; then
+        MESSAGE="$MESSAGE\n\n🗑️ <b>Удалено:</b> $REMOVED"
     fi
-    
-    # Проверяем, нужна ли перезагрузка
-    if echo "$LATEST_LOGS" | grep -q "reboot-required"; then
+
+    # Проверяем, требуется ли перезагрузка
+    if echo "$TODAY_LOG" | grep -q "reboot-required"; then
         MESSAGE="$MESSAGE\n\n⚠️ <b>Требуется перезагрузка!</b>"
     fi
-    
+
     send_telegram "$MESSAGE"
     log "Уведомление отправлено"
-    
 else
-    log "Обновлений не найдено"
+    # Если записи за сегодня есть, но обновления не устанавливались
+    log "За сегодня обновлений не устанавливалось."
+    MESSAGE="🖥️ <b>$SERVER_NAME</b> - Отчёт об обновлениях
+━━━━━━━━━━━━━━━━━━━━━
+📅 Дата: $(date '+%Y-%m-%d %H:%M:%S')
+
+✅ Система актуальна. Обновлений не найдено."
+    send_telegram "$MESSAGE"
 fi
 
 log "=== Проверка завершена ==="
