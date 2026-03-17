@@ -41,10 +41,132 @@ print_info() {
     echo -e "${YELLOW}ℹ️ $1${NC}"
 }
 
-# Очистка экрана
+# Функция полного удаления бота
+uninstall_bot() {
+    print_step "ПОЛНОЕ УДАЛЕНИЕ БОТА"
+    
+    echo -e "${RED}⚠️  ВНИМАНИЕ! Это удалит:${NC}"
+    echo "   • Все файлы бота из $INSTALL_DIR"
+    echo "   • Systemd сервис server-bot"
+    echo "   • Базу данных и логи"
+    echo "   • Меню управления и алиасы"
+    echo ""
+    read -p "Вы точно хотите удалить бота? (y/n): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo -e "${GREEN}Удаление отменено${NC}"
+        return 1
+    fi
+    
+    echo -e "\n${YELLOW}⏳ Останавливаю сервис...${NC}"
+    sudo systemctl stop server-bot 2>/dev/null || true
+    sudo systemctl disable server-bot 2>/dev/null || true
+    
+    echo -e "${YELLOW}⏳ Удаляю systemd сервис...${NC}"
+    sudo rm -f /etc/systemd/system/server-bot.service
+    sudo systemctl daemon-reload
+    
+    echo -e "${YELLOW}⏳ Удаляю файлы бота...${NC}"
+    rm -rf "$INSTALL_DIR"
+    
+    echo -e "${YELLOW}⏳ Удаляю логи и меню...${NC}"
+    rm -f "$LOG_FILE"
+    rm -f "$HOME/bot-menu.sh"
+    rm -f "$HOME/bot-commands.txt"
+    
+    # Удаляем алиасы из .bashrc
+    sed -i '/# ===== УПРАВЛЕНИЕ БОТОМ GigaBlyate\/server-bot =====/,+9d' "$HOME/.bashrc" 2>/dev/null || true
+    
+    echo -e "${GREEN}✅ Бот полностью удален с сервера!${NC}"
+    exit 0
+}
+
+# Функция проверки и установки Python библиотек
+install_python_deps() {
+    echo -e "\n${BLUE}📚 Установка Python библиотек...${NC}"
+    
+    # Активируем виртуальное окружение
+    source "$VENV_DIR/bin/activate"
+    
+    # Обновляем pip
+    pip install --upgrade pip >> "$LOG_FILE" 2>&1
+    
+    # Список необходимых библиотек
+    local packages=(
+        "python-telegram-bot[job-queue]==20.7"  # <-- ИЗМЕНЕНО! Добавлен job-queue
+        "psutil==5.9.5"
+        "aiohttp>=3.8.0"
+        "cryptography>=41.0.0"
+        "requests>=2.28.0"
+        "sqlite3"
+    )
+    
+    local total=${#packages[@]}
+    local current=0
+    local failed=()
+    
+    echo -e "${CYAN}⏳ Начинаю установку Python пакетов...${NC}"
+    
+    for pkg in "${packages[@]}"; do
+        current=$((current + 1))
+        echo -ne "\r${CYAN}⏳ Установка [$current/$total]: $pkg${NC}"
+        
+        if [[ "$pkg" == "sqlite3" ]]; then
+            # SQLite3 это системная библиотека, проверяем через Python
+            if ! python3 -c "import sqlite3" 2>/dev/null; then
+                echo -e "\n${YELLOW}⚠️ SQLite3 не найден в Python, устанавливаю системный пакет...${NC}"
+                sudo apt install -y sqlite3 libsqlite3-dev >> "$LOG_FILE" 2>&1
+            fi
+        else
+            # Проверяем, установлен ли уже пакет
+            pkg_name=$(echo "$pkg" | cut -d'[' -f1 | cut -d'=' -f1)
+            if pip show "$pkg_name" >> "$LOG_FILE" 2>&1; then
+                # Пакет уже установлен, проверяем версию
+                echo -ne "\r${GREEN}✅ Уже установлен: $pkg${NC}                      "
+            else
+                # Устанавливаем пакет
+                if ! pip install -q "$pkg" >> "$LOG_FILE" 2>&1; then
+                    failed+=("$pkg")
+                fi
+            fi
+        fi
+        sleep 0.2
+    done
+    
+    echo -e "\r${GREEN}✅ Установка завершена!${NC}                       "
+    
+    # Дополнительная проверка для python-telegram-bot
+    echo -e "\n${BLUE}🔍 Проверка установки python-telegram-bot...${NC}"
+    if python3 -c "from telegram.ext import JobQueue" 2>/dev/null; then
+        echo -e "${GREEN}✅ JobQueue успешно установлен и работает${NC}"
+    else
+        echo -e "${YELLOW}⚠️ JobQueue не найден, пробую переустановить с опцией job-queue...${NC}"
+        pip uninstall python-telegram-bot -y >> "$LOG_FILE" 2>&1
+        pip install "python-telegram-bot[job-queue]==20.7" >> "$LOG_FILE" 2>&1
+        if python3 -c "from telegram.ext import JobQueue" 2>/dev/null; then
+            echo -e "${GREEN}✅ JobQueue успешно установлен!${NC}"
+        else
+            echo -e "${RED}❌ Ошибка установки JobQueue${NC}"
+            failed+=("python-telegram-bot[job-queue]==20.7")
+        fi
+    fi
+    
+    if [ ${#failed[@]} -gt 0 ]; then
+        echo -e "\n${YELLOW}⚠️  Не удалось установить: ${failed[*]}${NC}"
+        echo "Попробуйте установить вручную:"
+        for pkg in "${failed[@]}"; do
+            echo "  pip install $pkg"
+        done
+    else
+        echo -e "\n${GREEN}✅ Все Python библиотеки успешно установлены!${NC}"
+    fi
+}
+
+# =============================================
+# ГЛАВНОЕ МЕНЮ
+# =============================================
 clear
 
-# Приветствие
 echo -e "${PURPLE}"
 echo "╔══════════════════════════════════════════════════════════════╗"
 echo "║                                                              ║"
@@ -65,8 +187,34 @@ echo "║              https://github.com/GigaBlyate/server-bot       ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
 
-echo -e "\n${WHITE}Добро пожаловать в установщик Telegram бота для управления сервером!${NC}"
-echo -e "${YELLOW}Скрипт автоматически установит и настроит всё необходимое.${NC}\n"
+echo ""
+echo "╔════════════════════════════════════════╗"
+echo "║  Выберите действие:                    ║"
+echo "╠════════════════════════════════════════╣"
+echo -e "║  ${GREEN}1) Установить бота${NC}                     ║"
+echo -e "║  ${RED}2) Удалить бота${NC}                         ║"
+echo -e "║  ${YELLOW}3) Выйти${NC}                               ║"
+echo "╚════════════════════════════════════════╝"
+echo ""
+read -p "Ваш выбор (1-3): " main_choice
+
+case $main_choice in
+    2)
+        uninstall_bot
+        exit 0
+        ;;
+    3)
+        echo -e "${YELLOW}Выход...${NC}"
+        exit 0
+        ;;
+    1)
+        echo -e "${GREEN}Продолжаем установку...${NC}"
+        ;;
+    *)
+        echo -e "${RED}Неверный выбор. Выход.${NC}"
+        exit 1
+        ;;
+esac
 
 # Проверка, что скрипт не запущен от root
 if [[ $EUID -eq 0 ]]; then
@@ -91,39 +239,28 @@ fi
 # =============================================
 print_step "ПРОВЕРКА ЗАВИСИМОСТЕЙ"
 
-# Проверка Git
-if ! command -v git &> /dev/null; then
-    print_info "Git не найден. Устанавливаю..."
-    sudo apt update >> "$LOG_FILE" 2>&1
-    sudo apt install git -y >> "$LOG_FILE" 2>&1
-    print_success "Git установлен"
-else
-    print_success "Git уже установлен"
-fi
+# Проверка и установка необходимых системных пакетов
+SYSTEM_PACKAGES=(
+    "git"
+    "python3"
+    "python3-pip"
+    "python3-venv"
+    "sqlite3"
+    "build-essential"
+    "wget"
+    "curl"
+    "iputils-ping"
+    "dnsutils"
+)
 
-# Проверка Python3
-if ! command -v python3 &> /dev/null; then
-    print_info "Python3 не найден. Устанавливаю..."
-    sudo apt update >> "$LOG_FILE" 2>&1
-    sudo apt install python3 python3-pip python3-venv -y >> "$LOG_FILE" 2>&1
-    print_success "Python3 установлен"
-else
-    print_success "Python3 уже установлен"
-fi
+for pkg in "${SYSTEM_PACKAGES[@]}"; do
+    if ! dpkg -l | grep -q "^ii  $pkg "; then
+        echo -e "${YELLOW}⚠️  Устанавливаю $pkg...${NC}"
+        sudo apt install -y "$pkg" >> "$LOG_FILE" 2>&1
+    fi
+done
 
-# Проверка pip
-if ! command -v pip3 &> /dev/null; then
-    print_info "pip3 не найден. Устанавливаю..."
-    sudo apt install python3-pip -y >> "$LOG_FILE" 2>&1
-    print_success "pip3 установлен"
-else
-    print_success "pip3 уже установлен"
-fi
-
-# Установка необходимых системных пакетов
-print_info "Устанавливаю системные пакеты..."
-sudo apt install -y python3-venv python3-dev build-essential wget curl >> "$LOG_FILE" 2>&1
-print_success "Системные пакеты установлены"
+print_success "Все системные пакеты установлены"
 
 # =============================================
 # 2. КЛОНИРОВАНИЕ РЕПОЗИТОРИЯ
@@ -195,19 +332,8 @@ else
     print_success "Виртуальное окружение уже существует"
 fi
 
-# Активация и установка зависимостей
-print_info "Активирую виртуальное окружение..."
-source "$VENV_DIR/bin/activate"
-
-if [ -f "requirements.txt" ]; then
-    print_info "Устанавливаю зависимости..."
-    pip install --upgrade pip >> "$LOG_FILE" 2>&1
-    pip install -r requirements.txt >> "$LOG_FILE" 2>&1
-    print_success "Зависимости установлены"
-else
-    print_error "Файл requirements.txt не найден!"
-    exit 1
-fi
+# Установка Python библиотек
+install_python_deps
 
 # =============================================
 # 4. НАСТРОЙКА КОНФИГУРАЦИИ
@@ -219,15 +345,12 @@ if [ ! -f "config.py" ]; then
         cp config.example.py config.py
         print_info "Создан файл config.py из примера"
         
-        # Автоматически получаем имя пользователя
-        USER_NAME=$(whoami)
-        
         echo ""
         echo -e "${YELLOW}⚠️  ТРЕБУЕТСЯ НАСТРОЙКА!${NC}"
         echo -e "${WHITE}Сейчас откроется редактор для файла config.py${NC}"
         echo "Пожалуйста, укажите следующие данные:"
-        echo "  1. TOKEN - получите у \033[4;34m@BotFather\033[0m в Telegram: \033[4;34mhttps://t.me/botfather\033[0m"
-        echo "  2. ADMIN_CHAT_ID - ваш Telegram ID (узнайте у \033[4;34m@userinfobot\033[0m:\033[4;34mhttps://t.me/userinfobot\033[0m)"
+        echo -e "  1. TOKEN - получите у \033[4;34m@BotFather\033[0m в Telegram: \033[4;34mhttps://t.me/botfather\033[0m"
+        echo -e "  2. ADMIN_CHAT_ID - ваш Telegram ID (узнайте у \033[4;34m@userinfobot\033[0m: \033[4;34mhttps://t.me/userinfobot\033[0m)"
         echo "  3. SERVER_NAME - название вашего сервера (например, MyVPS)"
         echo ""
         read -p "Нажмите Enter, чтобы открыть редактор..."
@@ -287,7 +410,6 @@ SERVICE_FILE="/etc/systemd/system/server-bot.service"
 if [ ! -f "$SERVICE_FILE" ]; then
     print_info "Создаю systemd сервис..."
     
-    # Создаем временный файл
     cat > /tmp/server-bot.service << EOF
 [Unit]
 Description=Server Management Bot by GigaBlyate
@@ -513,13 +635,6 @@ cat > "$HOME/bot-commands.txt" << 'EOF'
 ║  ─────────────────────────────────────────────────────────────   ║
 ║  sudo systemctl status server-bot                                ║
 ║  sudo journalctl -u server-bot -n 50 --no-pager                  ║
-║  tail -f ~/server-bot/update-notifier.log                        ║
-║                                                                  ║
-║  📊 МОНИТОРИНГ:                                                  ║
-║  ─────────────────────────────────────────────────────────────   ║
-║  sudo journalctl -u server-bot -f | grep -i error                ║
-║  tail -f /var/log/crash-monitor.log                              ║
-║  sudo systemctl status crash-monitor                             ║
 ║                                                                  ║
 ║  GitHub: https://github.com/GigaBlyate/server-bot                ║
 ║  Версия: 2.1.0                                                   ║
@@ -536,7 +651,7 @@ print_step "ЗАПУСК БОТА"
 
 print_info "Запускаю бота..."
 sudo systemctl start server-bot
-sleep 2
+sleep 3
 
 if sudo systemctl is-active --quiet server-bot; then
     print_success "Бот успешно запущен!"
@@ -546,7 +661,7 @@ else
 fi
 
 # =============================================
-# 9. ПРИМЕНЕНИЕ АЛИАСОВ
+# 9. ЗАВЕРШЕНИЕ И ОЧИСТКА
 # =============================================
 print_step "ЗАВЕРШЕНИЕ УСТАНОВКИ"
 
@@ -568,3 +683,14 @@ echo -e "${GREEN}║${NC}  ${WHITE}📚 Если забыли команды:${N
 echo -e "${GREEN}║${NC}                       ${CYAN}bot-help${NC}  или  ${CYAN}bot-guide${NC}            ${GREEN}║${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${NC}"
 echo ""
+
+# Спрашиваем про удаление install.sh
+echo ""
+read -p "Удалить установочный скрипт install.sh? (y/n): " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    rm -f "$0"
+    echo -e "${GREEN}✅ install.sh удален${NC}"
+else
+    echo -e "${YELLOW}ℹ️ install.sh оставлен${NC}"
+fi
