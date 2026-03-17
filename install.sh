@@ -113,7 +113,7 @@ show_logo
 
 echo -e "\n${WHITE}Добро пожаловать! Скрипт установит всё необходимое.${NC}"
 read -p "Продолжить? (y/n): " -n 1 -r
-cho
+echo
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     echo -e "${YELLOW}Установка отменена${NC}"
     exit 0
