@@ -112,12 +112,12 @@ install_python_deps() {
 show_logo
 
 echo -e "\n${WHITE}Добро пожаловать! Скрипт установит всё необходимое.${NC}"
-read -p "Продолжить? (y/n): " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo -e "${YELLOW}Установка отменена${NC}"
-    exit 0
-fi
+#read -p "Продолжить? (y/n): " -n 1 -r
+#echo
+#if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+#    echo -e "${YELLOW}Установка отменена${NC}"
+#    exit 0
+#fi
 
 # 1. СИСТЕМНЫЕ ЗАВИСИМОСТИ
 echo -e "\n${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
