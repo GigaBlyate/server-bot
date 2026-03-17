@@ -4,7 +4,7 @@
 # 🚀 УСТАНОВЩИК TELEGRAM БОТА GigaBlyate/server-bot
 # =============================================
 
-set -e  # Прерывать при ошибках
+set -e
 
 # Цвета для вывода
 RED='\033[0;31m'
@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 WHITE='\033[1;37m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 # Конфигурация
 REPO="GigaBlyate/server-bot"
@@ -22,7 +22,6 @@ INSTALL_DIR="$HOME/server-bot"
 VENV_DIR="$INSTALL_DIR/venv"
 LOG_FILE="$HOME/install-bot.log"
 
-# Функция для красивого вывода
 print_step() {
     echo -e "\n${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${CYAN}  🔹 $1${NC}"
@@ -41,7 +40,6 @@ print_info() {
     echo -e "${YELLOW}ℹ️ $1${NC}"
 }
 
-# Очистка экрана
 clear
 
 # Приветствие
@@ -58,7 +56,7 @@ echo "║ ░ ░▒  ░ ░░ ░▒ ▒░  ░   ▒▒ ░░ ░▒  ░ 
 echo "║ ░  ░  ░  ░ ░░ ░   ░   ▒   ░  ░  ░   ▒ ░   ░    ░             ║"
 echo "║       ░  ░  ░         ░  ░      ░   ░     ░  ░               ║"
 echo "║                                                              ║"
-echo "║              🤖 SERVER MANAGEMENT BOT v2.1.0 🤖             ║"
+echo "║              🤖 SERVER MANAGEMENT BOT v2.1.0 🤖              ║"
 echo "║                                                              ║"
 echo "║                   by ${CYAN}GigaBlyate${PURPLE}              ║"
 echo "║              https://github.com/GigaBlyate/server-bot        ║"
@@ -68,7 +66,7 @@ echo -e "${NC}"
 echo -e "\n${WHITE}Добро пожаловать в установщик Telegram бота для управления сервером!${NC}"
 echo -e "${YELLOW}Скрипт автоматически установит и настроит всё необходимое.${NC}\n"
 
-# Проверка, что скрипт не запущен от root
+# Проверка root
 if [[ $EUID -eq 0 ]]; then
    print_error "Этот скрипт не должен запускаться от root!"
    echo "Запустите его от обычного пользователя: ./install.sh"
@@ -117,7 +115,7 @@ else
     print_success "pip3 уже установлен"
 fi
 
-# Установка необходимых системных пакетов
+# Установка системных пакетов
 print_info "Устанавливаю системные пакеты..."
 sudo apt install -y python3-venv python3-dev build-essential wget curl >> "$LOG_FILE" 2>&1
 print_success "Системные пакеты установлены"
@@ -164,7 +162,6 @@ if [ ! -d "$INSTALL_DIR" ] && [ "$SKIP_CLONE" != 1 ]; then
     git clone "https://github.com/$REPO.git" "$INSTALL_DIR" >> "$LOG_FILE" 2>&1
     print_success "Репозиторий склонирован"
     
-    # Восстанавливаем бэкапы если нужно
     if [ "$upgrade_choice" = "2" ]; then
         if [ -f "/tmp/config.py.backup" ]; then
             mv /tmp/config.py.backup "$INSTALL_DIR/config.py"
@@ -195,8 +192,6 @@ else
     print_success "Виртуальное окружение уже существует"
 fi
 
-# Активация и установка зависимостей
-print_info "Активирую виртуальное окружение..."
 source "$VENV_DIR/bin/activate"
 
 if [ -f "requirements.txt" ]; then
@@ -229,7 +224,6 @@ if [ ! -f "config.py" ]; then
         echo ""
         read -p "Нажмите Enter, чтобы открыть редактор..."
         
-        # Определяем редактор
         if command -v nano &> /dev/null; then
             nano config.py
         elif command -v vim &> /dev/null; then
@@ -284,7 +278,6 @@ SERVICE_FILE="/etc/systemd/system/server-bot.service"
 if [ ! -f "$SERVICE_FILE" ]; then
     print_info "Создаю systemd сервис..."
     
-    # Создаем временный файл
     cat > /tmp/server-bot.service << EOF
 [Unit]
 Description=Server Management Bot by GigaBlyate
@@ -317,11 +310,9 @@ fi
 # =============================================
 print_step "СОЗДАНИЕ МЕНЮ УПРАВЛЕНИЯ"
 
-# Создаем скрипт меню
 cat > "$HOME/bot-menu.sh" << 'EOF'
 #!/bin/bash
 
-# Цвета
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
@@ -453,7 +444,6 @@ EOF
 
 chmod +x "$HOME/bot-menu.sh"
 
-# Добавляем алиасы в .bashrc, если их там еще нет
 if ! grep -q "alias bot=" "$HOME/.bashrc"; then
     cat >> "$HOME/.bashrc" << 'EOF'
 
@@ -473,7 +463,6 @@ else
     print_success "Алиасы уже существуют"
 fi
 
-# Создаем шпаргалку
 cat > "$HOME/bot-commands.txt" << 'EOF'
 ╔══════════════════════════════════════════════════════════════════╗
 ║        🤖 GigaBlyate SERVER BOT - ШПАРГАЛКА КОМАНД 🤖          ║
@@ -536,11 +525,10 @@ else
 fi
 
 # =============================================
-# 9. ПРИМЕНЕНИЕ АЛИАСОВ
+# 9. ЗАВЕРШЕНИЕ
 # =============================================
 print_step "ЗАВЕРШЕНИЕ УСТАНОВКИ"
 
-# Применяем алиасы для текущей сессии
 source ~/.bashrc 2>/dev/null || true
 
 print_success "УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!"
