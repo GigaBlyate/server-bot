@@ -48,20 +48,20 @@ clear
 echo -e "${PURPLE}"
 echo "╔══════════════════════════════════════════════════════════════╗"
 echo "║                                                              ║"
-echo "║   ██████  ██ ▄█▀ ▄▄▄          ██████ ██▓▓█████▄▄▄█████▓     ║"
-echo "║ ▒██    ▒  ██▄█▒ ▒████▄      ▒██    ▒ ▓██▒▓█   ▀▓  ██▒ ▓▒    ║"
-echo "║ ░ ▓██▄   ▓███▄░ ▒██  ▀█▄    ░ ▓██▄   ▒██▒▒███  ▒ ▓██░ ▒░    ║"
-echo "║   ▒   ██▒▓██ █▄ ░██▄▄▄▄██     ▒   ██▒░██░▒▓█  ▄░ ▓██▓ ░     ║"
-echo "║ ▒██████▒▒▒██▒ █▄ ▓█   ▓██▒▒██████▒▒░██░░▒████▒ ▒██▒ ░     ║"
-echo "║ ▒ ▒▓▒ ▒ ░▒ ▒▒ ▓▒ ▒▒   ▓▒█░▒ ▒▓▒ ▒ ░░▓  ░░ ▒░ ░ ▒ ░░       ║"
-echo "║ ░ ░▒  ░ ░░ ░▒ ▒░  ░   ▒▒ ░░ ░▒  ░ ░ ▒ ░ ░ ░  ░   ░        ║"
-echo "║ ░  ░  ░  ░ ░░ ░   ░   ▒   ░  ░  ░   ▒ ░   ░    ░          ║"
-echo "║       ░  ░  ░         ░  ░      ░   ░     ░  ░             ║"
+echo "║   ██████  ██ ▄█▀ ▄▄▄          ██████ ██▓▓█████▄▄▄█████▓      ║"
+echo "║ ▒██    ▒  ██▄█▒ ▒████▄      ▒██    ▒ ▓██▒▓█   ▀▓  ██▒ ▓▒     ║"
+echo "║ ░ ▓██▄   ▓███▄░ ▒██  ▀█▄    ░ ▓██▄   ▒██▒▒███  ▒ ▓██░ ▒░     ║"
+echo "║   ▒   ██▒▓██ █▄ ░██▄▄▄▄██     ▒   ██▒░██░▒▓█  ▄░ ▓██▓ ░      ║"
+echo "║ ▒██████▒▒▒██▒ █▄ ▓█   ▓██▒▒██████▒▒░██░░▒████▒ ▒██▒ ░        ║"
+echo "║ ▒ ▒▓▒ ▒ ░▒ ▒▒ ▓▒ ▒▒   ▓▒█░▒ ▒▓▒ ▒ ░░▓  ░░ ▒░ ░ ▒ ░░          ║"
+echo "║ ░ ░▒  ░ ░░ ░▒ ▒░  ░   ▒▒ ░░ ░▒  ░ ░ ▒ ░ ░ ░  ░   ░           ║"
+echo "║ ░  ░  ░  ░ ░░ ░   ░   ▒   ░  ░  ░   ▒ ░   ░    ░             ║"
+echo "║       ░  ░  ░         ░  ░      ░   ░     ░  ░               ║"
 echo "║                                                              ║"
-echo "║              🤖 SERVER MANAGEMENT BOT v2.1.0 🤖            ║"
+echo "║              🤖 SERVER MANAGEMENT BOT v2.1.0 🤖             ║"
 echo "║                                                              ║"
-echo "║                   by ${CYAN}GigaBlyate${PURPLE}                         ║"
-echo "║              https://github.com/GigaBlyate/server-bot       ║"
+echo "║                   by ${CYAN}GigaBlyate${PURPLE}              ║"
+echo "║              https://github.com/GigaBlyate/server-bot        ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
 
@@ -177,7 +177,10 @@ if [ ! -d "$INSTALL_DIR" ] && [ "$SKIP_CLONE" != 1 ]; then
     fi
 fi
 
-cd "$INSTALL_DIR"
+cd "$INSTALL_DIR" 2>/dev/null || {
+    print_error "Не удалось перейти в папку $INSTALL_DIR"
+    exit 1
+}
 
 # =============================================
 # 3. НАСТРОЙКА ВИРТУАЛЬНОГО ОКРУЖЕНИЯ
@@ -215,9 +218,6 @@ if [ ! -f "config.py" ]; then
     if [ -f "config.example.py" ]; then
         cp config.example.py config.py
         print_info "Создан файл config.py из примера"
-        
-        # Автоматически получаем имя пользователя
-        USER_NAME=$(whoami)
         
         echo ""
         echo -e "${YELLOW}⚠️  ТРЕБУЕТСЯ НАСТРОЙКА!${NC}"
@@ -404,10 +404,10 @@ while true; do
             echo "╔════════════════════════════════════════════════════════╗"
             echo "║              🔧 НАСТРОЙКИ БОТА                        ║"
             echo "╠════════════════════════════════════════════════════════╣"
-            echo "║ 1. Редактировать config.py                            ║"
-            echo "║ 2. Показать логи установки                            ║"
-            echo "║ 3. Обновить бота с GitHub                             ║"
-            echo "║ 4. Назад                                              ║"
+            echo "║ 1. Редактировать config.py                             ║"
+            echo "║ 2. Показать логи установки                             ║"
+            echo "║ 3. Обновить бота с GitHub                              ║"
+            echo "║ 4. Назад                                               ║"
             echo "╚════════════════════════════════════════════════════════╝${NC}"
             echo ""
             read -p "Выберите действие: " subchoice
@@ -510,13 +510,6 @@ cat > "$HOME/bot-commands.txt" << 'EOF'
 ║  ─────────────────────────────────────────────────────────────   ║
 ║  sudo systemctl status server-bot                                ║
 ║  sudo journalctl -u server-bot -n 50 --no-pager                  ║
-║  tail -f ~/server-bot/update-notifier.log                        ║
-║                                                                  ║
-║  📊 МОНИТОРИНГ:                                                  ║
-║  ─────────────────────────────────────────────────────────────   ║
-║  sudo journalctl -u server-bot -f | grep -i error                ║
-║  tail -f /var/log/crash-monitor.log                              ║
-║  sudo systemctl status crash-monitor                             ║
 ║                                                                  ║
 ║  GitHub: https://github.com/GigaBlyate/server-bot                ║
 ║  Версия: 2.1.0                                                   ║
