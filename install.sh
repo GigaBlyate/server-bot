@@ -93,7 +93,7 @@ install_python_deps() {
     
     # Список необходимых библиотек
     local packages=(
-        "python-telegram-bot[job-queue]==20.7"  # <-- ИЗМЕНЕНО! Добавлен job-queue
+        "python-telegram-bot[job-queue]==20.7"  
         "psutil==5.9.5"
         "aiohttp>=3.8.0"
         "cryptography>=41.0.0"
@@ -352,6 +352,11 @@ if [ ! -f "config.py" ]; then
         echo -e "  1. TOKEN - получите у \033[4;34m@BotFather\033[0m в Telegram: \033[4;34mhttps://t.me/botfather\033[0m"
         echo -e "  2. ADMIN_CHAT_ID - ваш Telegram ID (узнайте у \033[4;34m@userinfobot\033[0m: \033[4;34mhttps://t.me/userinfobot\033[0m)"
         echo "  3. SERVER_NAME - название вашего сервера (например, MyVPS)"
+        echo -e "${CYAN}💡 ИНСТРУКЦИЯ ПО СОХРАНЕНИЮ:${NC}"
+        echo -e "  • Внесите изменения в файл"
+        echo -e "  • Нажмите ${GREEN}Ctrl+O${NC} (сохранить), затем ${GREEN}Enter${NC} (подтвердить)"
+        echo -e "  • Нажмите ${GREEN}Ctrl+X${NC} для выхода из редактора"
+        echo -e "  • После сохранения установка продолжится автоматически"
         echo ""
         read -p "Нажмите Enter, чтобы открыть редактор..."
         
@@ -689,8 +694,14 @@ echo ""
 read -p "Удалить установочный скрипт install.sh? (y/n): " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    rm -f "$0"
-    echo -e "${GREEN}✅ install.sh удален${NC}"
+    
+    SCRIPT_PATH=$(realpath "$0" 2>/dev/null || readlink -f "$0" 2>/dev/null || echo "$0")
+    if [ -f "$SCRIPT_PATH" ]; then
+        rm -f "$SCRIPT_PATH"
+        echo -e "${GREEN}✅ install.sh удален${NC}"
+    else
+        echo -e "${YELLOW}⚠️ Не удалось определить путь к скрипту. Удалите вручную: rm install.sh${NC}"
+    fi
 else
     echo -e "${YELLOW}ℹ️ install.sh оставлен${NC}"
 fi
