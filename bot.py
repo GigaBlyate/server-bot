@@ -15,8 +15,12 @@ import re
 from datetime import datetime, timedelta, time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler,
-    ContextTypes, MessageHandler, filters
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    MessageHandler,
+    filters
 )
 import config
 
@@ -27,7 +31,7 @@ FAIL2BAN_LOG_PATH = '/var/log/fail2ban.log'
 ADMIN_ID = str(config.ADMIN_CHAT_ID)
 
 # Версия бота и ссылка на GitHub
-BOT_VERSION = "2.1.0"
+BOT_VERSION = "2.1.1"
 GITHUB_REPO = "GigaBlyate/server-bot"
 GITHUB_RAW_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/version.txt"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
@@ -2529,19 +2533,40 @@ async def button_handler(update: Update, context):
     if data.startswith('period_'):
         _, vid, months = data.split('_')
         months = int(months)
-        days_map = {1: 30, 3: 90, 6: 180, 12: 365}
-        new_date = (datetime.now() + timedelta(days=days_map[months])).strftime('%Y-%m-%d')
+
+        # Получаем текущую дату окончания
+        current_expiry = db_execute(
+            "SELECT expiry_date FROM vps_rental WHERE id=?",
+            (vid,),
+            fetch=True
+        )[0][0]
+
+        # Прибавляем месяцы к текущей дате окончания
+        from dateutil.relativedelta import relativedelta
+        current_date = datetime.strptime(current_expiry, '%Y-%m-%d').date()
+        today = datetime.now().date()
+
+        # Если срок уже истек, считаем от сегодня
+        if current_date < today:
+            current_date = today
+
+        # Прибавляем ровно столько месяцев, сколько выбрано
+        new_date = (current_date + relativedelta(months=months)).strftime('%Y-%m-%d')
+
         db_execute(
             "UPDATE vps_rental SET expiry_date=?, last_notify=NULL WHERE id=?",
             (new_date, vid)
         )
+
         name = db_execute("SELECT name FROM vps_rental WHERE id=?", (vid,), fetch=True)[0][0]
         month_word = "месяц" if months == 1 else "месяца" if months in [2, 3, 4] else "месяцев"
+
         return await query.edit_message_text(
             f"✅ <b>СРОК АРЕНДЫ ПРОДЛЁН!</b>\n\n"
             f"📋 <b>Сервер:</b> {escape_html(name)}\n"
+            f"📅 <b>Старая дата:</b> {current_expiry}\n"
             f"📅 <b>Новая дата окончания:</b> {new_date}\n"
-            f"⏱️ <b>Срок:</b> {months} {month_word}",
+            f"⏱️ <b>Продлено на:</b> {months} {month_word}",
             reply_markup=back_btn('vps_menu'),
             parse_mode='HTML'
         )
