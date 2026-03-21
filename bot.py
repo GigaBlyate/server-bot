@@ -31,7 +31,7 @@ FAIL2BAN_LOG_PATH = '/var/log/fail2ban.log'
 ADMIN_ID = str(config.ADMIN_CHAT_ID)
 
 # Версия бота и ссылка на GitHub
-BOT_VERSION = "2.1.2"
+BOT_VERSION = "2.1.3"
 GITHUB_REPO = "GigaBlyate/server-bot"
 GITHUB_RAW_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/version.txt"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
@@ -917,19 +917,14 @@ async def check_bot_version():
                 if resp.status == 200:
                     remote_version = (await resp.text()).strip()
                     if remote_version != BOT_VERSION:
-                        changelog = (
-                            "Что нового:\n"
-                            "• Улучшенное форматирование отчетов\n"
-                            "• Прогресс-бары для нагрузки\n"
-                            "• Подробные инструкции по действиям\n"
-                            "• Компактный режим отображения"
-                        )
+                        # Получаем changelog для новой версии
+                        changelog = await get_changelog(remote_version)
                         return remote_version, (
                             f"🔔 <b>Доступно обновление!</b>\n\n"
-                            f"Текущая версия: {BOT_VERSION}\n"
-                            f"Новая версия: {remote_version}\n\n"
-                            f"{changelog}\n\n"
-                            f"Скачать: {GITHUB_RELEASES_URL}"
+                            f"📋 <b>Текущая версия:</b> {BOT_VERSION}\n"
+                            f"📋 <b>Новая версия:</b> {remote_version}\n\n"
+                            f"📝 <b>Что нового:</b>\n{changelog}\n\n"
+                            f"📦 <b>Скачать:</b> {GITHUB_RELEASES_URL}"
                         )
                     else:
                         return None, f"✅ <b>У вас актуальная версия</b> {BOT_VERSION}"
@@ -939,6 +934,55 @@ async def check_bot_version():
         return None, f"❌ Ошибка соединения с GitHub: {e}"
     except Exception as e:
         return None, f"❌ Ошибка при проверке обновлений: {e}"
+
+
+async def get_changelog(version=None):
+    """Получает список изменений из CHANGELOG.md"""
+    changelog_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/CHANGELOG.md"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(changelog_url, timeout=5) as resp:
+                if resp.status == 200:
+                    content = await resp.text()
+
+                    if version:
+                        # Ищем блок для конкретной версии
+                        pattern = rf'## \[{re.escape(version)}\].*?\n(.*?)(?=\n## \[|\Z)'
+                        match = re.search(pattern, content, re.DOTALL)
+                        if match:
+                            changelog = match.group(1).strip()
+                            # Форматируем для вывода
+                            lines = changelog.split('\n')
+                            formatted = []
+                            for line in lines:
+                                if line.strip().startswith('###'):
+                                    formatted.append(f"\n<b>{line.strip()}</b>")
+                                elif line.strip().startswith('-'):
+                                    formatted.append(f"   {line.strip()}")
+                                elif line.strip():
+                                    formatted.append(line.strip())
+                            return '\n'.join(formatted)
+
+                    # Если версия не указана или не найдена, берём последний блок
+                    match = re.search(r'## \[(.*?)\].*?\n(.*?)(?=\n## \[|\Z)', content, re.DOTALL)
+                    if match:
+                        changelog = match.group(2).strip()
+                        lines = changelog.split('\n')
+                        formatted = []
+                        for line in lines[:15]:  # Ограничиваем
+                            if line.strip().startswith('###'):
+                                formatted.append(f"\n<b>{line.strip()}</b>")
+                            elif line.strip().startswith('-'):
+                                formatted.append(f"   {line.strip()}")
+                            elif line.strip():
+                                formatted.append(line.strip())
+                        return '\n'.join(formatted)
+
+                    return "📝 Список изменений временно недоступен"
+                else:
+                    return "📝 Список изменений временно недоступен"
+    except Exception:
+        return "📝 Список изменений временно недоступен"
 
 
 # ==== СИСТЕМНАЯ ДИАГНОСТИКА ====
