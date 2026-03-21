@@ -31,7 +31,7 @@ FAIL2BAN_LOG_PATH = '/var/log/fail2ban.log'
 ADMIN_ID = str(config.ADMIN_CHAT_ID)
 
 # Версия бота и ссылка на GitHub
-BOT_VERSION = "2.1.1"
+BOT_VERSION = "2.1.2"
 GITHUB_REPO = "GigaBlyate/server-bot"
 GITHUB_RAW_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/version.txt"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
@@ -209,6 +209,21 @@ def format_uptime(seconds):
         parts.append(f"{secs}с")
 
     return " ".join(parts)
+
+def get_memory_info():
+    """Возвращает информацию о памяти в стиле free -h (с учётом кэша)"""
+    mem = psutil.virtual_memory()
+    # used = total - available (как в free -h)
+    used_with_cache = mem.total - mem.available
+    percent_with_cache = (used_with_cache / mem.total) * 100
+    return {
+        'total': mem.total,
+        'used': used_with_cache,
+        'free': mem.free,
+        'available': mem.available,
+        'percent': percent_with_cache,
+        'buff_cache': mem.total - mem.available - mem.free
+    }
 
 
 def create_progress_bar(percent, width=10):
@@ -954,16 +969,16 @@ async def get_system_diagnostic():
         result += f"💻 CPU: {cpu_bar} {cpu_percent}%\n"
         result += f"📈 Load average: {load_avg[0]:.2f}, {load_avg[1]:.2f}, {load_avg[2]:.2f}\n\n"
 
-        mem = psutil.virtual_memory()
-        mem_bar = create_progress_bar(mem.percent, 20)
+        mem_info = get_memory_info()
+        mem_bar = create_progress_bar(mem_info['percent'], 20)
         swap = psutil.swap_memory()
 
         result += "💾 <b>ПАМЯТЬ:</b>\n"
-        result += f"RAM: {mem_bar} {mem.percent}%\n"
+        result += f"RAM: {mem_bar} {mem_info['percent']:.1f}%\n"
         result += (
-            f"📊 Всего: {format_size(mem.total)}, "
-            f"Использовано: {format_size(mem.used)}, "
-            f"Свободно: {format_size(mem.available)}\n"
+            f"📊 Всего: {format_size(mem_info['total'])}, "
+            f"Использовано: {format_size(mem_info['used'])}, "
+            f"Доступно: {format_size(mem_info['available'])}\n"
         )
 
         if swap.total > 0:
@@ -1069,11 +1084,11 @@ async def get_system_diagnostic():
                 result += "• 🔴 Высокая нагрузка CPU – проверьте процессы выше\n"
             # Проверяем, что mem - правильный объект
             try:
-                if mem.percent > 85:
+                if mem_info['percent'] > 85:
                     result += "• 🔴 Мало свободной RAM – закройте приложения или добавьте swap\n"
             except AttributeError:
-                mem_check = psutil.virtual_memory()
-                if mem_check.percent > 85:
+                mem_info_check = get_memory_info()
+                if mem_info_check['percent'] > 85:
                     result += "• 🔴 Мало свободной RAM – закройте приложения или добавьте swap\n"
             
             disk_usage = psutil.disk_usage('/')
@@ -1108,8 +1123,8 @@ async def get_server_info():
         cpu_percent = psutil.cpu_percent(interval=1)
         cpu_bar = create_progress_bar(cpu_percent, 20)
 
-        mem = psutil.virtual_memory()
-        mem_bar = create_progress_bar(mem.percent, 20)
+        mem_info = get_memory_info()
+        mem_bar = create_progress_bar(mem_info['percent'], 20)
         swap = psutil.swap_memory()
 
         disks = []
@@ -1163,11 +1178,11 @@ async def get_server_info():
             text += f"• Load average: {load_avg[0]:.2f}, {load_avg[1]:.2f}, {load_avg[2]:.2f}\n\n"
 
             text += f"<b>💾 ПАМЯТЬ:</b>\n"
-            text += f"• RAM: {mem_bar} {mem.percent}%\n"
+            text += f"• RAM: {mem_bar} {mem_info['percent']:.1f}%\n"
             text += (
-                f"  Всего: {format_size(mem.total)}, "
-                f"Использовано: {format_size(mem.used)}, "
-                f"Свободно: {format_size(mem.available)}\n"
+                f"  Всего: {format_size(mem_info['total'])}, "
+                f"Использовано: {format_size(mem_info['used'])}, "
+                f"Доступно: {format_size(mem_info['available'])}\n"
             )
             if swap.total > 0:
                 swap_bar = create_progress_bar(swap.percent, 20)
@@ -1246,14 +1261,14 @@ async def get_status():
     """Быстрый статус сервера"""
     try:
         cpu = psutil.cpu_percent(interval=1)
-        mem = psutil.virtual_memory()
+        mem_info = get_memory_info()
         disk = psutil.disk_usage('/')
         net = psutil.net_io_counters()
         uptime = datetime.now() - datetime.fromtimestamp(psutil.boot_time())
         uptime_str = format_uptime(uptime.total_seconds())
 
         cpu_bar = create_progress_bar(cpu, 15)
-        mem_bar = create_progress_bar(mem.percent, 15)
+        mem_bar = create_progress_bar(mem_info['percent'], 15)
         disk_bar = create_progress_bar(disk.percent, 15)
 
         return (
@@ -1261,8 +1276,8 @@ async def get_status():
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"⏱️  <b>Аптайм:</b> {uptime_str}\n\n"
             f"💻 <b>CPU:</b>\n{cpu_bar} {cpu}% ({psutil.cpu_count()} ядер)\n\n"
-            f"💾 <b>RAM:</b>\n{mem_bar} {mem.percent}%\n"
-            f"📊 {format_size(mem.used)} / {format_size(mem.total)}\n\n"
+            f"💾 <b>RAM:</b>\n{mem_bar} {mem_info['percent']:.1f}%\n"
+            f"📊 {format_size(mem_info['used'])} / {format_size(mem_info['total'])}\n\n"
             f"💿 <b>Диск:</b>\n{disk_bar} {disk.percent}%\n"
             f"📊 {format_size(disk.used)} / {format_size(disk.total)}\n\n"
             f"🌐 <b>Сеть:</b>\n"
@@ -1291,7 +1306,7 @@ async def generate_daily_report():
     """Генерирует ежедневный отчет"""
     try:
         cpu = psutil.cpu_percent(interval=1)
-        mem = psutil.virtual_memory()
+        mem_info = get_memory_info()
         disk = psutil.disk_usage('/')
         net = psutil.net_io_counters()
         uptime = datetime.now() - datetime.fromtimestamp(psutil.boot_time())
@@ -1326,7 +1341,7 @@ async def generate_daily_report():
         alert_count = alerts[0][0] if alerts else 0
 
         cpu_bar = create_progress_bar(cpu, 20)
-        mem_bar = create_progress_bar(mem.percent, 20)
+        mem_bar = create_progress_bar(mem_info['percent'], 20)
         disk_bar = create_progress_bar(disk.percent, 20)
 
         report_format = get_setting('report_format', 'detailed')
@@ -1338,7 +1353,7 @@ async def generate_daily_report():
                 f"📅 {datetime.now().strftime('%d.%m.%Y')}\n"
                 f"⏱️ {uptime_str}\n\n"
                 f"💻 CPU: {cpu_bar} {cpu}%\n"
-                f"💾 RAM: {mem_bar} {mem.percent}%\n"
+                f"💾 RAM: {mem_bar} {mem_info['percent']:.1f}%\n"
                 f"💿 Диск: {disk_bar} {disk.percent}%\n"
                 f"📈 Алертов: {alert_count}"
             )
@@ -1351,8 +1366,8 @@ async def generate_daily_report():
                 f"⏱️ <b>Аптайм:</b> {uptime_str}\n\n"
                 f"<b>📊 ОБЩАЯ СТАТИСТИКА:</b>\n"
                 f"💻 <b>CPU:</b>\n{cpu_bar} {cpu}%\n\n"
-                f"💾 <b>RAM:</b>\n{mem_bar} {mem.percent}%\n"
-                f"📊 Использовано: {format_size(mem.used)} из {format_size(mem.total)}\n\n"
+                f"💾 <b>RAM:</b>\n{mem_bar} {mem_info['percent']:.1f}%\n"
+                f"📊 Использовано: {format_size(mem_info['used'])} из {format_size(mem_info['total'])}\n\n"
                 f"💿 <b>Диск:</b>\n{disk_bar} {disk.percent}%\n"
                 f"📊 Использовано: {format_size(disk.used)} из {format_size(disk.total)}\n\n"
                 f"🌐 <b>Сеть за все время:</b>\n"
