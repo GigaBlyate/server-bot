@@ -18,7 +18,6 @@ ROOT_HELPER_PATH="/usr/local/bin/server-bot-rootctl"
 LOG_FILE="${HOME}/install-bot.log"
 ERROR_LOG="${HOME}/install-bot-errors.log"
 TELEMETRY_URL_FIXED="https://g-panel.top"
-SERVER_ID_FILE="${HOME}/.gpanel-server-id"
 SCRIPT_SOURCE="${BASH_SOURCE[0]:-}"
 TMP_BACKUP_DIR=""
 MODE=""
@@ -278,23 +277,14 @@ get_install_id() {
   sqlite3 "$db_path" "SELECT value FROM settings WHERE key='telemetry_install_id' LIMIT 1;" 2>/dev/null || true
 }
 
-get_server_uid() {
-  if [[ -f "$SERVER_ID_FILE" ]]; then
-    tr -d '[:space:]' < "$SERVER_ID_FILE"
-  fi
-}
-
 send_uninstall_telemetry() {
-  local install_id=""
-  local server_uid=""
-  install_id="$(get_install_id)"
-  server_uid="$(get_server_uid)"
-  [[ -n "$install_id" || -n "$server_uid" ]] || return 0
+  local py=""
+  py="${VENV_DIR}/bin/python"
 
-  curl -fsS -X POST "${TELEMETRY_URL_FIXED}/api/telemetry/uninstall" \
-    -H 'Content-Type: application/json' \
-    -d "{\"install_id\":\"${install_id}\",\"server_uid\":\"${server_uid}\",\"bot_version\":\"$(cat "${INSTALL_DIR}/version.txt" 2>/dev/null || echo unknown)\"}" \
-    >/dev/null 2>&1 || true
+  [[ -x "$py" ]] || return 0
+  [[ -f "$INSTALL_DIR/telemetry_ctl.py" ]] || return 0
+
+  (cd "$INSTALL_DIR" && "$py" "$INSTALL_DIR/telemetry_ctl.py" uninstall --url "$TELEMETRY_URL_FIXED" --timeout 10) >/dev/null 2>&1 || true
 }
 
 choose_mode() {
@@ -503,22 +493,9 @@ TELEMETRY_URL="__TELEMETRY_URL__"
 ROOT_HELPER="__ROOT_HELPER__"
 
 send_uninstall() {
-  local db_path="${INSTALL_DIR}/vps_data.db"
-  local server_id_file="${HOME}/.gpanel-server-id"
-  local install_id=""
-  local server_uid=""
-
-  if [[ -f "$db_path" ]]; then
-    install_id="$(sqlite3 "$db_path" "SELECT value FROM settings WHERE key='telemetry_install_id' LIMIT 1;" 2>/dev/null || true)"
-  fi
-  if [[ -f "$server_id_file" ]]; then
-    server_uid="$(tr -d '[:space:]' < "$server_id_file")"
-  fi
-
-  if [[ -n "$install_id" || -n "$server_uid" ]]; then
-    curl -fsS -X POST "${TELEMETRY_URL}/api/telemetry/uninstall" \
-      -H 'Content-Type: application/json' \
-      -d "{\"install_id\":\"${install_id}\",\"server_uid\":\"${server_uid}\",\"bot_version\":\"$(cat "${INSTALL_DIR}/version.txt" 2>/dev/null || echo unknown)\"}" >/dev/null 2>&1 || true
+  local py="${INSTALL_DIR}/venv/bin/python"
+  if [[ -x "$py" && -f "${INSTALL_DIR}/telemetry_ctl.py" ]]; then
+    (cd "$INSTALL_DIR" && "$py" "${INSTALL_DIR}/telemetry_ctl.py" uninstall --url "$TELEMETRY_URL" --timeout 10) >/dev/null 2>&1 || true
   fi
 }
 
