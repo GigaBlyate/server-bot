@@ -271,20 +271,12 @@ clone_repo() {
   return 1
 }
 
-get_install_id() {
-  local db_path="${INSTALL_DIR}/vps_data.db"
-  [[ -f "$db_path" ]] || return 0
-  sqlite3 "$db_path" "SELECT value FROM settings WHERE key='telemetry_install_id' LIMIT 1;" 2>/dev/null || true
-}
-
 send_uninstall_telemetry() {
   local py=""
-  py="${VENV_DIR}/bin/python"
-
-  [[ -x "$py" ]] || return 0
-  [[ -f "$INSTALL_DIR/telemetry_ctl.py" ]] || return 0
-
-  (cd "$INSTALL_DIR" && "$py" "$INSTALL_DIR/telemetry_ctl.py" uninstall --url "$TELEMETRY_URL_FIXED" --timeout 10) >/dev/null 2>&1 || true
+  py="${INSTALL_DIR}/venv/bin/python"
+  if [[ -x "$py" && -f "${INSTALL_DIR}/telemetry_ctl.py" ]]; then
+    TELEMETRY_URL="${TELEMETRY_URL_FIXED}" "$py" "${INSTALL_DIR}/telemetry_ctl.py" uninstall >/dev/null 2>&1 || true
+  fi
 }
 
 choose_mode() {
@@ -495,7 +487,7 @@ ROOT_HELPER="__ROOT_HELPER__"
 send_uninstall() {
   local py="${INSTALL_DIR}/venv/bin/python"
   if [[ -x "$py" && -f "${INSTALL_DIR}/telemetry_ctl.py" ]]; then
-    (cd "$INSTALL_DIR" && "$py" "${INSTALL_DIR}/telemetry_ctl.py" uninstall --url "$TELEMETRY_URL" --timeout 10) >/dev/null 2>&1 || true
+    TELEMETRY_URL="${TELEMETRY_URL}" "$py" "${INSTALL_DIR}/telemetry_ctl.py" uninstall >/dev/null 2>&1 || true
   fi
 }
 
