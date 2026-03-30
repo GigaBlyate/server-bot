@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import re
 from pathlib import Path
 
 from telegram import Update
@@ -39,6 +40,35 @@ logging.basicConfig(
         logging.StreamHandler(),
     ],
 )
+
+
+class SecretRedactionFilter(logging.Filter):
+    _patterns = [
+        re.compile(r'(https://api\.telegram\.org/bot)([^/\s"]+)', re.IGNORECASE),
+        re.compile(r"(BOT_TOKEN[=:\s]+)([^\s\"']+)", re.IGNORECASE),
+        re.compile(r"(Authorization[=:\s]+Bearer\s+)([^\s\"']+)", re.IGNORECASE),
+    ]
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:
+            return True
+        redacted = message
+        for pattern in self._patterns:
+            redacted = pattern.sub(r'\1<redacted>', redacted)
+        if redacted != message:
+            record.msg = redacted
+            record.args = ()
+        return True
+
+
+for _handler in logging.getLogger().handlers:
+    _handler.addFilter(SecretRedactionFilter())
+
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('httpcore').setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 
