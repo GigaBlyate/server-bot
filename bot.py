@@ -227,7 +227,7 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
     application.add_error_handler(error_handler)
 
-    logger.info('Starting bot version 3.1.6')
+    logger.info('Starting bot version %s', (Path(config.PROJECT_DIR) / 'version.txt').read_text(encoding='utf-8').strip() if (Path(config.PROJECT_DIR) / 'version.txt').exists() else 'unknown')
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
