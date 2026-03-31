@@ -1,14 +1,43 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import json
+
+import config
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from core.db import get_all_settings, get_setting, set_setting
 from core.scheduler import schedule_daily_report_job
-from security import validate_google_drive_id
+from security import safe_run_command, validate_google_drive_id
+from services.system_info import get_service_scan_snapshot
 from services.traffic_quota import get_quota_summary_text
-from ui.keyboards import settings_keyboard, traffic_keyboard
+from ui.keyboards import (
+    confirm_keyboard,
+    service_monitor_keyboard,
+    settings_keyboard,
+    traffic_keyboard,
+)
+
+
+def _load_manual_services() -> list[dict]:
+    raw = str(get_setting('manual_services_json', '[]') or '[]')
+    try:
+        payload = json.loads(raw)
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+    except Exception:
+        pass
+    return []
+
+
+def _save_manual_services(items: list[dict]) -> None:
+    set_setting('manual_services_json', json.dumps(items, ensure_ascii=False))
+
+
+def _humanize(name: str) -> str:
+    clean = name.replace('.service', '').replace('_', ' ').replace('-', ' ').strip()
+    return ' '.join(word.capitalize() for word in clean.split()) or name
 
 
 async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -18,7 +47,7 @@ async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     text = (
         '⚙️ <b>Настройки</b>\n\n'
         'Здесь собраны только полезные рабочие параметры: пороги, отчёт, '
-        'лимит трафика, обновление сервера, обновление бота и бэкап.\n\n'
+        'лимит трафика, обновление сервера, обновление бота, бэкап и ключевые сервисы.\n\n'
         f'Текущий режим трафика: <b>{get_quota_summary_text()}</b>'
     )
     await query.edit_message_text(
@@ -40,6 +69,35 @@ async def show_traffic_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await query.edit_message_text(
         text,
         reply_markup=traffic_keyboard(settings),
+        parse_mode='HTML',
+    )
+
+
+async def show_service_monitor_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
+    query = update.callback_query
+    await query.answer()
+    scan = await get_service_scan_snapshot(context.application.bot_data, force=force)
+    manual_items = _load_manual_services()
+
+    auto_lines = [f'• {name}' for name in scan.get('auto', [])[:10]] or ['• Пока ничего не найдено']
+    manual_lines = [f'• {item.get("label") or item.get("name")}' for item in manual_items[:10]] or ['• Нет']
+    text = (
+        '🧩 <b>Ключевые сервисы</b>\n\n'
+        'Бот автоматически сканирует systemd-сервисы, процессы и популярные панели/VPN.\n'
+        'Если чего-то не хватает, можно быстро добавить это вручную.\n\n'
+        '<b>Автоматически найдено</b>\n'
+        + '\n'.join(auto_lines)
+        + '\n\n<b>Добавлено вручную</b>\n'
+        + '\n'.join(manual_lines)
+    )
+    if scan.get('docker_permission_needed'):
+        text += (
+            '\n\n🔐 Для отслеживания Docker-контейнеров нужен доступ к Docker socket. '
+            'Если подтвердите, бот попросит минимально необходимые права для чтения контейнеров.'
+        )
+    await query.edit_message_text(
+        text,
+        reply_markup=service_monitor_keyboard(manual_items, bool(scan.get('docker_permission_needed'))),
         parse_mode='HTML',
     )
 
@@ -104,6 +162,80 @@ async def handle_settings_callback(update: Update, context: ContextTypes.DEFAULT
         set_setting('traffic_alert_sent_300gb', 'false')
         await show_traffic_menu(update, context)
         return True
+    if data == 'service_monitor_menu':
+        await show_service_monitor_menu(update, context)
+        return True
+    if data == 'service_rescan':
+        await show_service_monitor_menu(update, context, force=True)
+        return True
+    if data == 'service_add_systemd':
+        await query.answer()
+        context.user_data['awaiting'] = 'manual_service_systemd'
+        await query.edit_message_text(
+            'Введите имя systemd-сервиса.\n\nПримеры:\n• nginx\n• wg-quick@wg0\n• xray'
+        )
+        return True
+    if data == 'service_add_process':
+        await query.answer()
+        context.user_data['awaiting'] = 'manual_service_process'
+        await query.edit_message_text(
+            'Введите имя процесса или ключевое слово процесса.\n\nПримеры:\n• mtg\n• sing-box\n• remnawave'
+        )
+        return True
+    if data == 'service_add_docker':
+        await query.answer()
+        scan = await get_service_scan_snapshot(context.application.bot_data, force=True)
+        if scan.get('docker_permission_needed'):
+            await query.edit_message_text(
+                '🔐 <b>Нужен доступ к Docker</b>\n\n'
+                'Для отслеживания контейнеров боту нужен доступ к Docker socket.\n'
+                'Если подтвердите, helper попробует выдать сервисному пользователю доступ к группе docker и перезапустить бота.',
+                reply_markup=confirm_keyboard('service_grant_docker', 'service_monitor_menu'),
+                parse_mode='HTML',
+            )
+            return True
+        context.user_data['awaiting'] = 'manual_service_docker'
+        await query.edit_message_text(
+            'Введите имя Docker-контейнера или его часть.\n\nПримеры:\n• marzban\n• xray\n• remnawave'
+        )
+        return True
+    if data == 'service_grant_docker':
+        await query.answer()
+        await query.edit_message_text('⏳ Пытаюсь выдать доступ к Docker и перезапустить бота...', parse_mode='HTML')
+        code, out, err = await safe_run_command(['sudo', config.ROOT_HELPER, 'grant-docker-access'], timeout=60)
+        if code == 0:
+            await query.edit_message_text(
+                '✅ Доступ к Docker запрошен. Бот будет перезапущен, после чего можно заново открыть раздел ключевых сервисов.',
+                reply_markup=confirm_keyboard('refresh_dashboard', 'settings_menu'),
+                parse_mode='HTML',
+            )
+        else:
+            await query.edit_message_text(
+                '❌ Не удалось выдать доступ к Docker.\n\n'
+                'Возможно, helper ещё не обновлён или группа docker отсутствует.',
+                reply_markup=confirm_keyboard('service_monitor_menu', 'settings_menu'),
+                parse_mode='HTML',
+            )
+        return True
+    if data == 'service_clear_manual':
+        await query.answer('Ручной список очищен')
+        _save_manual_services([])
+        await show_service_monitor_menu(update, context, force=True)
+        return True
+    if data.startswith('service_remove_'):
+        try:
+            idx = int(data.rsplit('_', 1)[1])
+        except Exception:
+            idx = -1
+        items = _load_manual_services()
+        if 0 <= idx < len(items):
+            removed = items.pop(idx)
+            _save_manual_services(items)
+            await query.answer(f'Удалено: {removed.get("label") or removed.get("name")}')
+        else:
+            await query.answer('Запись не найдена')
+        await show_service_monitor_menu(update, context, force=True)
+        return True
     return False
 
 
@@ -163,6 +295,21 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             return True
         set_setting('google_drive_folder_id', text)
         await update.message.reply_text('✅ ID папки Google Drive сохранён.')
+        return True
+
+    if awaiting in {'manual_service_systemd', 'manual_service_process', 'manual_service_docker'}:
+        service_type = awaiting.replace('manual_service_', '')
+        items = _load_manual_services()
+        entry = {'type': service_type, 'name': text, 'label': _humanize(text)}
+        for existing in items:
+            if existing.get('type') == entry['type'] and existing.get('name') == entry['name']:
+                await update.message.reply_text('ℹ️ Такой сервис уже есть в ручном списке.')
+                return True
+        items.append(entry)
+        _save_manual_services(items)
+        await update.message.reply_text(
+            f'✅ Добавлено в ключевые сервисы: {entry["label"]} ({service_type}).'
+        )
         return True
 
     return False

@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import calendar
+import json
 from typing import Dict, Iterable, List
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -79,6 +80,7 @@ def settings_keyboard(settings: Dict[str, str]) -> InlineKeyboardMarkup:
                 f'Лимит трафика: {traffic}',
                 callback_data='traffic_menu',
             )],
+            [InlineKeyboardButton('Ключевые сервисы', callback_data='service_monitor_menu')],
             [InlineKeyboardButton('Обновить сервер', callback_data='system_update_check')],
             [InlineKeyboardButton('Обновить бота', callback_data='bot_update_check')],
             [InlineKeyboardButton('◀️ Назад', callback_data='menu')],
@@ -103,6 +105,40 @@ def traffic_keyboard(settings: Dict[str, str]) -> InlineKeyboardMarkup:
             )],
             [InlineKeyboardButton('Сбросить текущий цикл', callback_data='traffic_reset_cycle')],
             [InlineKeyboardButton('◀️ Назад', callback_data='settings_menu')],
+        ]
+    )
+
+
+def service_monitor_keyboard(manual_items: List[Dict[str, str]], docker_permission_needed: bool = False) -> InlineKeyboardMarkup:
+    keyboard: List[List[InlineKeyboardButton]] = [
+        [InlineKeyboardButton('🔎 Пересканировать', callback_data='service_rescan')],
+        [
+            InlineKeyboardButton('➕ systemd', callback_data='service_add_systemd'),
+            InlineKeyboardButton('➕ process', callback_data='service_add_process'),
+        ],
+        [InlineKeyboardButton('➕ docker', callback_data='service_add_docker')],
+    ]
+    if docker_permission_needed:
+        keyboard.append([InlineKeyboardButton('🔐 Дать доступ к Docker', callback_data='service_grant_docker')])
+
+    for idx, item in enumerate(manual_items[:8]):
+        label = item.get('label') or item.get('name') or f'#{idx + 1}'
+        keyboard.append([
+            InlineKeyboardButton(f'🗑 Удалить: {label}', callback_data=f'service_remove_{idx}')
+        ])
+    if manual_items:
+        keyboard.append([InlineKeyboardButton('🧹 Очистить ручной список', callback_data='service_clear_manual')])
+    keyboard.append([InlineKeyboardButton('◀️ Назад', callback_data='settings_menu')])
+    return InlineKeyboardMarkup(keyboard)
+
+
+def confirm_keyboard(yes_callback: str, no_callback: str = 'menu') -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton('✅ Да', callback_data=yes_callback),
+                InlineKeyboardButton('❌ Нет', callback_data=no_callback),
+            ]
         ]
     )
 
@@ -257,14 +293,3 @@ def smart_backup_keyboard(
     keyboard.append([InlineKeyboardButton('📦 Создать бэкап', callback_data='backup_create_selected')])
     keyboard.append([InlineKeyboardButton('◀️ Назад', callback_data='backup_menu')])
     return InlineKeyboardMarkup(keyboard)
-
-
-def confirm_keyboard(confirm_data: str, cancel_data: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton('✅ Да', callback_data=confirm_data),
-                InlineKeyboardButton('❌ Нет', callback_data=cancel_data),
-            ]
-        ]
-    )

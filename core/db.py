@@ -46,6 +46,7 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     'telemetry_registered': 'false',
     'telemetry_last_sent': '',
     'telemetry_auth_secret': '',
+    'manual_services_json': '[]',
 }
 
 

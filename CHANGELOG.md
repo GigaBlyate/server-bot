@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 3.1.11
+- dashboard: auto-detect OS name and installed version, hide hostname from main menu
+- dashboard: fixed updates status refresh after successful system upgrade
+- dashboard: expanded traffic summary with total, yesterday, current period, and package remainder
+- dashboard: added concise load status with color indication
+- dashboard: added last-backup age to main menu
+- services: automatic discovery of key services, including popular VPN services, MTProto, Xray-family, Docker, databases, and web stacks
+- settings: added simple manual key-service management and optional Docker access flow for service detection
+- install: synced version bump for 3.1.11
+
 ## 3.1.9
 - telemetry: stable server_uid + hourly heartbeat + active bots now
 - installer: mandatory telemetry agreement flow with detailed text

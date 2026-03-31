@@ -102,8 +102,12 @@ async def _perform_system_update(query, context: ContextTypes.DEFAULT_TYPE) -> N
 
     ok, details = await install_system_updates(progress)
     if ok:
+        count, packages = await get_upgradable_packages(limit=10)
+        await set_system_update_cache(context.application.bot_data, count, packages)
+        status_line = 'Система актуальна.' if count == 0 else f'После обновления ещё доступно пакетов: {count}.'
         await query.message.edit_text(
             '✅ <b>Система обновлена</b>\n\n'
+            f'{escape_html(status_line)}\n\n'
             f'<code>{escape_html(details[-3000:])}</code>',
             reply_markup=back_button('settings_menu'),
             parse_mode='HTML',

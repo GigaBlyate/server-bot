@@ -9,18 +9,53 @@ import socket
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import psutil
 
+from core.db import get_setting
 from core.formatting import format_size, format_uptime
 from security import safe_run_command
 from services.geolocation import get_public_ip_info
 
 logger = logging.getLogger(__name__)
-SERVICE_CACHE_TTL = 60
+SERVICE_CACHE_TTL = 90
 UPDATE_CACHE_TTL = 1800
-KEY_SERVICES = ['server-bot', 'nginx', 'docker', 'prosody', 'x-ui', 'ssh', 'fail2ban']
+
+SERVICE_CATALOG: List[Dict[str, Any]] = [
+    {'key': 'server-bot', 'label': 'G-PANEL', 'systemd': ['server-bot']},
+    {'key': 'ssh', 'label': 'SSH', 'systemd': ['ssh', 'sshd'], 'process': ['sshd']},
+    {'key': 'nginx', 'label': 'Nginx', 'systemd': ['nginx'], 'process': ['nginx']},
+    {'key': 'apache', 'label': 'Apache', 'systemd': ['apache2', 'httpd'], 'process': ['apache2', 'httpd']},
+    {'key': 'caddy', 'label': 'Caddy', 'systemd': ['caddy'], 'process': ['caddy']},
+    {'key': 'docker', 'label': 'Docker', 'systemd': ['docker'], 'process': ['dockerd'], 'docker_builtin': True},
+    {'key': 'docker-compose', 'label': 'Docker Compose', 'process': ['docker-compose', 'compose']},
+    {'key': 'containerd', 'label': 'containerd', 'systemd': ['containerd'], 'process': ['containerd']},
+    {'key': 'podman', 'label': 'Podman', 'systemd': ['podman'], 'process': ['podman']},
+    {'key': 'redis', 'label': 'Redis', 'systemd': ['redis', 'redis-server'], 'process': ['redis-server']},
+    {'key': 'mysql', 'label': 'MySQL/MariaDB', 'systemd': ['mysql', 'mariadb'], 'process': ['mysqld', 'mariadbd']},
+    {'key': 'postgresql', 'label': 'PostgreSQL', 'systemd': ['postgresql'], 'process': ['postgres', 'postgresql']},
+    {'key': 'fail2ban', 'label': 'Fail2Ban', 'systemd': ['fail2ban'], 'process': ['fail2ban-server']},
+    {'key': 'certbot', 'label': 'Certbot', 'systemd': ['certbot'], 'process': ['certbot']},
+    {'key': 'x-ui', 'label': 'X-UI', 'systemd': ['x-ui'], 'process': ['x-ui']},
+    {'key': '3x-ui', 'label': '3X-UI', 'systemd': ['3x-ui'], 'process': ['3x-ui']},
+    {'key': 'marzban', 'label': 'Marzban', 'systemd': ['marzban', 'marzban-node'], 'process': ['marzban', 'marzban-node'], 'docker': ['marzban', 'marzban-node']},
+    {'key': 'remnawave', 'label': 'Remnawave', 'systemd': ['remnawave'], 'process': ['remnawave'], 'docker': ['remnawave']},
+    {'key': 'wireguard', 'label': 'WireGuard', 'systemd_prefix': ['wg-quick@', 'wireguard'], 'process': ['wg-quick', 'wireguard-go']},
+    {'key': 'openvpn', 'label': 'OpenVPN', 'systemd_prefix': ['openvpn', 'openvpn-server@', 'openvpn-client@'], 'process': ['openvpn']},
+    {'key': 'ocserv', 'label': 'ocserv', 'systemd': ['ocserv'], 'process': ['ocserv-main', 'ocserv']},
+    {'key': 'strongswan', 'label': 'strongSwan', 'systemd': ['strongswan', 'strongswan-starter', 'ipsec'], 'process': ['charon', 'starter']},
+    {'key': 'xray', 'label': 'Xray', 'systemd': ['xray'], 'process': ['xray']},
+    {'key': 'v2ray', 'label': 'V2Ray', 'systemd': ['v2ray'], 'process': ['v2ray']},
+    {'key': 'sing-box', 'label': 'sing-box', 'systemd': ['sing-box', 'singbox'], 'process': ['sing-box', 'singbox']},
+    {'key': 'hysteria', 'label': 'Hysteria', 'systemd': ['hysteria-server', 'hysteria', 'hysteria2'], 'process': ['hysteria', 'hysteria2']},
+    {'key': 'trojan', 'label': 'Trojan', 'systemd': ['trojan', 'trojan-go'], 'process': ['trojan', 'trojan-go']},
+    {'key': 'shadowsocks', 'label': 'Shadowsocks', 'systemd': ['shadowsocks-libev', 'shadowsocks-rust', 'ssserver'], 'process': ['ssserver', 'ss-local']},
+    {'key': 'gost', 'label': 'Gost', 'systemd': ['gost'], 'process': ['gost']},
+    {'key': 'mtg', 'label': 'MTProto Proxy', 'systemd': ['mtg', 'mtproto-proxy', 'mtproxy'], 'process': ['mtg', 'mtproto-proxy', 'mtproxy', 'telemt']},
+]
+
+DOCKER_PERMISSION_ERRORS = ('permission denied', 'got permission denied', 'connect: permission denied')
 
 
 def get_local_ip_addresses() -> List[str]:
@@ -47,6 +82,53 @@ def _cpu_model() -> str:
     except Exception:
         pass
     return platform.processor() or 'N/A'
+
+
+def _get_os_name() -> str:
+    try:
+        data: Dict[str, str] = {}
+        for line in Path('/etc/os-release').read_text(encoding='utf-8').splitlines():
+            if '=' not in line:
+                continue
+            key, value = line.split('=', 1)
+            data[key.strip()] = value.strip().strip('"')
+        pretty = data.get('PRETTY_NAME', '').strip()
+        if pretty:
+            return pretty
+        parts = [data.get('NAME', '').strip(), data.get('VERSION', '').strip()]
+        result = ' '.join(part for part in parts if part).strip()
+        if result:
+            return result
+    except Exception:
+        pass
+    return platform.platform()
+
+
+def _humanize_service_name(raw: str) -> str:
+    cleaned = raw.replace('.service', '').replace('-', ' ').replace('_', ' ').strip()
+    return ' '.join(part.capitalize() if part else '' for part in cleaned.split()) or raw
+
+
+def _manual_service_definitions() -> List[Dict[str, str]]:
+    raw = str(get_setting('manual_services_json', '[]') or '[]')
+    try:
+        payload = json.loads(raw)
+        if not isinstance(payload, list):
+            return []
+        result: List[Dict[str, str]] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            service_type = str(item.get('type') or '').strip().lower()
+            name = str(item.get('name') or '').strip()
+            if service_type not in {'systemd', 'process', 'docker'} or not name:
+                continue
+            label = str(item.get('label') or '').strip() or _humanize_service_name(name)
+            result.append({'type': service_type, 'name': name, 'label': label})
+        return result[:20]
+    except Exception:
+        logger.warning('Cannot parse manual_services_json')
+        return []
 
 
 async def _disk_models() -> List[str]:
@@ -90,21 +172,162 @@ async def _nic_models() -> List[str]:
     return fallback[:6]
 
 
+async def _list_systemd_units() -> Dict[str, str]:
+    code, out, err = await safe_run_command(
+        ['systemctl', 'list-units', '--type=service', '--all', '--no-legend', '--no-pager'],
+        timeout=12,
+    )
+    raw = out or err
+    if code != 0 and not raw.strip():
+        return {}
+    result: Dict[str, str] = {}
+    for line in raw.splitlines():
+        chunks = line.split()
+        if len(chunks) < 4:
+            continue
+        unit, _, active, sub = chunks[:4]
+        norm = unit.replace('.service', '').strip()
+        result[norm] = sub if active == 'active' else active
+    return result
+
+
+def _list_processes() -> List[Tuple[str, str]]:
+    items: List[Tuple[str, str]] = []
+    for proc in psutil.process_iter(['name', 'cmdline']):
+        try:
+            name = str(proc.info.get('name') or '').strip().lower()
+            cmdline = ' '.join(proc.info.get('cmdline') or []).strip().lower()
+            if name or cmdline:
+                items.append((name, cmdline))
+        except Exception:
+            continue
+    return items
+
+
+async def _list_docker_containers() -> Tuple[Dict[str, str], bool]:
+    code, out, err = await safe_run_command(
+        ['docker', 'ps', '--format', '{{.Names}}\t{{.Status}}'],
+        timeout=8,
+    )
+    permission_needed = False
+    error_text = (err or out or '').lower()
+    if code != 0:
+        if any(fragment in error_text for fragment in DOCKER_PERMISSION_ERRORS):
+            permission_needed = True
+        return {}, permission_needed
+
+    result: Dict[str, str] = {}
+    for line in (out or '').splitlines():
+        if not line.strip():
+            continue
+        if '\t' in line:
+            name, status = line.split('\t', 1)
+        else:
+            name, status = line.strip(), 'running'
+        result[name.strip().lower()] = status.strip() or 'running'
+    return result, permission_needed
+
+
+def _status_from_catalog(
+    entry: Dict[str, Any],
+    systemd_units: Dict[str, str],
+    processes: List[Tuple[str, str]],
+    docker_containers: Dict[str, str],
+) -> Tuple[str, str]:
+    for unit in entry.get('systemd', []):
+        status = systemd_units.get(unit)
+        if status:
+            return entry['label'], status
+    for prefix in entry.get('systemd_prefix', []):
+        for unit_name, status in sorted(systemd_units.items()):
+            if unit_name.startswith(prefix):
+                suffix = unit_name[len(prefix):].strip('@-._')
+                label = entry['label'] if not suffix else f"{entry['label']} {suffix}"
+                return label, status
+    for keyword in entry.get('process', []):
+        lower_keyword = str(keyword).lower()
+        for proc_name, cmdline in processes:
+            if lower_keyword and (lower_keyword in proc_name or lower_keyword in cmdline):
+                return entry['label'], 'active'
+    for docker_name in entry.get('docker', []):
+        lower_name = str(docker_name).lower()
+        for container, status in docker_containers.items():
+            if lower_name in container:
+                return entry['label'], 'active' if 'up' in status.lower() or 'running' in status.lower() else status
+    if entry.get('docker_builtin') and docker_containers:
+        return entry['label'], 'active'
+    return '', ''
+
+
+def _status_for_manual_service(
+    item: Dict[str, str],
+    systemd_units: Dict[str, str],
+    processes: List[Tuple[str, str]],
+    docker_containers: Dict[str, str],
+) -> str:
+    service_type = item['type']
+    name = item['name'].strip().lower()
+    if service_type == 'systemd':
+        return systemd_units.get(name, 'missing')
+    if service_type == 'process':
+        for proc_name, cmdline in processes:
+            if name in proc_name or name in cmdline:
+                return 'active'
+        return 'missing'
+    if service_type == 'docker':
+        for container, status in docker_containers.items():
+            if name in container:
+                return 'active' if 'up' in status.lower() or 'running' in status.lower() else status
+        return 'missing'
+    return 'unknown'
+
+
 async def get_service_statuses(bot_data: Dict[str, Any], force: bool = False) -> Dict[str, str]:
     cached = bot_data.get('service_statuses')
     if not force and cached and time.time() - cached.get('cached_at', 0) < SERVICE_CACHE_TTL:
         return cached['data']
 
-    result: Dict[str, str] = {}
-    for service in KEY_SERVICES:
-        _, out, err = await safe_run_command(['systemctl', 'is-active', service], timeout=5)
-        status = (out or err).strip().splitlines()[0] if (out or err) else 'unknown'
-        if status == 'inactive' and 'not-found' in err:
-            continue
-        result[service] = status
+    systemd_units = await _list_systemd_units()
+    processes = _list_processes()
+    docker_containers, docker_permission_needed = await _list_docker_containers()
 
-    bot_data['service_statuses'] = {'cached_at': time.time(), 'data': result}
+    result: Dict[str, str] = {}
+    auto_labels: List[str] = []
+    for entry in SERVICE_CATALOG:
+        label, status = _status_from_catalog(entry, systemd_units, processes, docker_containers)
+        if not label or not status:
+            continue
+        if label in result:
+            continue
+        result[label] = status
+        auto_labels.append(label)
+
+    manual_labels: List[str] = []
+    for item in _manual_service_definitions():
+        label = item['label']
+        status = _status_for_manual_service(item, systemd_units, processes, docker_containers)
+        result[label] = status
+        manual_labels.append(label)
+
+    bot_data['service_statuses'] = {
+        'cached_at': time.time(),
+        'data': result,
+        'auto': auto_labels,
+        'manual': manual_labels,
+        'docker_permission_needed': docker_permission_needed,
+    }
     return result
+
+
+async def get_service_scan_snapshot(bot_data: Dict[str, Any], force: bool = False) -> Dict[str, Any]:
+    await get_service_statuses(bot_data, force=force)
+    cached = bot_data.get('service_statuses') or {}
+    return {
+        'data': dict(cached.get('data') or {}),
+        'auto': list(cached.get('auto') or []),
+        'manual': list(cached.get('manual') or []),
+        'docker_permission_needed': bool(cached.get('docker_permission_needed')),
+    }
 
 
 async def get_system_update_cache(bot_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -144,18 +367,9 @@ async def get_server_info(bot_data: Dict[str, Any]) -> Dict[str, Any]:
     except OSError:
         load1, load5, load15 = 0.0, 0.0, 0.0
 
-    pretty_name = platform.platform()
-    try:
-        for line in Path('/etc/os-release').read_text(encoding='utf-8').splitlines():
-            if line.startswith('PRETTY_NAME='):
-                pretty_name = line.split('=', 1)[1].strip().strip('"')
-                break
-    except Exception:
-        pass
-
     return {
         'hostname': socket.gethostname(),
-        'os_name': pretty_name,
+        'os_name': _get_os_name(),
         'kernel': platform.release(),
         'arch': platform.machine(),
         'boot_time': boot,
@@ -170,6 +384,8 @@ async def get_server_info(bot_data: Dict[str, Any]) -> Dict[str, Any]:
         'disk_percent': disk.percent,
         'disk_used': format_size(disk.used),
         'disk_total': format_size(disk.total),
+        'net_total_sent': int(net.bytes_sent),
+        'net_total_recv': int(net.bytes_recv),
         'load1': load1,
         'load5': load5,
         'load15': load15,

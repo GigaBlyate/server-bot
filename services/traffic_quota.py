@@ -8,8 +8,8 @@ from typing import Any, Dict
 import psutil
 from telegram.ext import ContextTypes
 
-from core.db import get_setting, set_setting
-from core.formatting import format_gb
+from core.db import get_daily_metrics_summary, get_setting, set_setting
+from core.formatting import format_gb, format_size
 
 logger = logging.getLogger(__name__)
 GB = 1024 ** 3
@@ -18,7 +18,6 @@ TB_GB = 1024
 
 def _as_bool(value: str) -> bool:
     return str(value).lower() == 'true'
-
 
 
 def _ensure_cycle_started() -> None:
@@ -54,9 +53,13 @@ def _ensure_cycle_started() -> None:
         set_setting('traffic_alert_sent_300gb', 'false')
 
 
-
 def get_quota_status() -> Dict[str, Any]:
     mode = get_setting('traffic_mode', 'unlimited')
+    counters = psutil.net_io_counters()
+    total_bytes = int(counters.bytes_sent) + int(counters.bytes_recv)
+    yesterday = get_daily_metrics_summary()
+    yesterday_bytes = int((yesterday.get('traffic_sent') or 0) + (yesterday.get('traffic_recv') or 0))
+
     if mode != 'quota':
         return {
             'mode': 'unlimited',
@@ -64,10 +67,12 @@ def get_quota_status() -> Dict[str, Any]:
             'remaining_gb': None,
             'used_gb': None,
             'quota_gb': None,
+            'total_bytes': total_bytes,
+            'yesterday_bytes': yesterday_bytes,
+            'current_bytes': None,
         }
 
     _ensure_cycle_started()
-    counters = psutil.net_io_counters()
     baseline_sent = int(get_setting('traffic_baseline_sent', '0') or 0)
     baseline_recv = int(get_setting('traffic_baseline_recv', '0') or 0)
     quota_gb = float(get_setting('traffic_quota_gb', '3072') or 3072)
@@ -89,18 +94,34 @@ def get_quota_status() -> Dict[str, Any]:
         'quota_gb': quota_gb,
         'label': f'{format_gb(used_gb)} из {format_gb(quota_gb)}',
         'cycle_end': cycle_end,
+        'total_bytes': total_bytes,
+        'yesterday_bytes': yesterday_bytes,
+        'current_bytes': used_bytes,
     }
-
 
 
 def get_quota_summary_text() -> str:
     status = get_quota_status()
     if status['mode'] == 'unlimited':
-        return 'Трафик: безлимитный'
+        return f'Трафик: безлимитный, всего {format_size(status["total_bytes"])}'
     return (
         f"Трафик: {status['label']}, осталось {format_gb(status['remaining_gb'])} "
         f"до {status['cycle_end']}"
     )
+
+
+def get_dashboard_traffic_lines() -> list[str]:
+    status = get_quota_status()
+    if status['mode'] == 'unlimited':
+        return [
+            f'• Трафик: всего {format_size(status["total_bytes"])}',
+            '• Статус: безлимитный',
+        ]
+    return [
+        f'• Трафик: всего {format_size(status["total_bytes"])}',
+        f'• Вчера: {format_size(status["yesterday_bytes"])} • Сейчас: {format_size(status["current_bytes"])}',
+        f'• Остаток пакета: {format_gb(status["remaining_gb"])} из {format_gb(status["quota_gb"])}',
+    ]
 
 
 async def traffic_quota_job(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -124,8 +145,8 @@ async def traffic_quota_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         await context.bot.send_message(
             chat_id=context.application.bot_data['admin_id'],
             text=(
-                '🚨 <b>Критически мало трафика</b>\n\n'
-                f'Осталось около {format_gb(remaining)}. Проверьте лимит или тариф.'
+                '🚨 <b>Критично мало трафика</b>\n\n'
+                f'Осталось всего {format_gb(remaining)}.'
             ),
             parse_mode='HTML',
         )

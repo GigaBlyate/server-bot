@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+from datetime import datetime
 from typing import Any, Dict, List
 
 from telegram.ext import ContextTypes
@@ -17,9 +18,46 @@ from core.db import (
 from core.formatting import compact_bar, days_left_text, escape_html, format_size
 from services.certificates import get_expiring_certificates
 from services.system_info import get_service_statuses, get_system_update_cache
-from services.traffic_quota import get_quota_status, get_quota_summary_text
+from services.traffic_quota import get_dashboard_traffic_lines, get_quota_status
 from services.vps_service import build_vps_summary
 from services.updater import get_current_version
+
+
+def _service_icon(status: str) -> str:
+    if status == 'active':
+        return '🟢'
+    if status in {'activating', 'reloading'}:
+        return '🟡'
+    if status in {'missing', 'not-found', 'dead', 'failed'}:
+        return '🔴'
+    return '🟡'
+
+
+def _load_status(snapshot: Dict[str, Any]) -> str:
+    cores = max(1, int(snapshot.get('cpu_cores') or snapshot.get('cpu_count') or 1))
+    ratio = float(snapshot.get('load1') or 0.0) / cores
+    if ratio < 0.70:
+        return f'🟢 Низкая ({snapshot["load1"]:.2f})'
+    if ratio < 1.20:
+        return f'🟡 Нормальная ({snapshot["load1"]:.2f})'
+    return f'🔴 Высокая ({snapshot["load1"]:.2f})'
+
+
+def _backup_age_line() -> str:
+    backup_info = get_backup_result()
+    raw = str(backup_info.get('last_backup_success') or '').strip()
+    if not raw:
+        return '• Последний бэкап: ещё не выполнялся'
+    try:
+        dt = datetime.fromisoformat(raw)
+        days = max(0, (datetime.now() - dt).days)
+        if days == 0:
+            return '• Последний бэкап: сегодня'
+        if days == 1:
+            return '• Последний бэкап: 1 день назад'
+        return f'• Последний бэкап: {days} дн. назад'
+    except Exception:
+        return f'• Последний бэкап: {escape_html(raw)}'
 
 
 async def build_dashboard_text(
@@ -30,13 +68,7 @@ async def build_dashboard_text(
     geo = snapshot['public_geo']
     service_lines = []
     for name, status in snapshot['services'].items():
-        if status == 'active':
-            icon = '🟢'
-        elif status in {'activating', 'reloading'}:
-            icon = '🟡'
-        else:
-            icon = '🔴'
-        service_lines.append(f'{icon} {name}: {escape_html(status)}')
+        service_lines.append(f'{_service_icon(status)} {escape_html(name)}: {escape_html(status)}')
 
     due_vps = build_vps_summary(30)
     certs = await get_expiring_certificates(bot_data, 30)
@@ -51,7 +83,7 @@ async def build_dashboard_text(
     updates = updates_cache.get('count')
     updates_line = 'Проверка не выполнялась'
     if updates is not None:
-        updates_line = 'Система актуальна' if updates == 0 else f'Доступно обновлений: {updates}'
+        updates_line = 'Система актуальна' if int(updates) == 0 else f'Доступно обновлений: {updates}'
 
     text = [
         f'👋 <b>{escape_html(first_name or "Администратор")}</b>, это главное меню <b>{escape_html(config.SERVER_NAME)}</b>.',
@@ -64,12 +96,15 @@ async def build_dashboard_text(
         f'UP   {escape_html(snapshot["uptime"])}',
         '',
         '<b>Сервер</b>',
-        f'• {escape_html(snapshot["hostname"])} • {escape_html(snapshot["os_name"])}',
+        f'• ОС: {escape_html(snapshot["os_name"])}',
         f'• {escape_html(geo.get("city", "N/A"))}, {escape_html(geo.get("country", "N/A"))} • {escape_html(geo.get("ip", "N/A"))}',
         f'• Версия бота: {escape_html(get_current_version())}',
+        f'• Нагрузка: {_load_status(snapshot)}',
         f'• Обновления: {updates_line}',
-        f'• {get_quota_summary_text()}',
     ]
+    # Inline extend keeps formatting compact and readable.
+    text.extend(get_dashboard_traffic_lines())
+    text.append(_backup_age_line())
 
     if due_vps:
         text.extend(['', '<b>Скоро закончится аренда VPS</b>', *due_vps])
@@ -78,7 +113,7 @@ async def build_dashboard_text(
         text.extend(['', '<b>Сертификаты до 30 дней</b>', *cert_lines])
 
     if service_lines:
-        text.extend(['', '<b>Ключевые сервисы</b>', *service_lines[:5]])
+        text.extend(['', '<b>Ключевые сервисы</b>', *service_lines[:7]])
 
     text.extend(['', 'Нажми кнопку ниже для действия или обнови данные.'])
     return '\n'.join(text)

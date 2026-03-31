@@ -38,7 +38,7 @@ BOARD_SERIAL_CANDIDATES = (
     Path('/sys/devices/virtual/dmi/id/board_serial'),
 )
 NET_CLASS_DIR = Path('/sys/class/net')
-IDENTITY_NAMESPACE = 'gpanel-telemetry/3.1.10'
+IDENTITY_NAMESPACE = 'gpanel-telemetry/3.1.11'
 
 
 def telemetry_enabled() -> bool:
@@ -235,7 +235,7 @@ async def post_telemetry_event(event_name: str) -> bool:
     url = f'{telemetry_url()}{path}'
     timeout = aiohttp.ClientTimeout(total=TELEMETRY_TIMEOUT)
     headers = {
-        'User-Agent': 'server-bot-telemetry/3.1.10',
+        'User-Agent': 'server-bot-telemetry/3.1.11',
         'X-Telemetry-Timestamp': timestamp,
         'X-Telemetry-Nonce': nonce,
         'X-Telemetry-Signature': signature,
