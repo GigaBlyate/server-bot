@@ -37,6 +37,12 @@ def back_button(target: str = 'menu') -> InlineKeyboardMarkup:
     )
 
 
+def prompt_back_keyboard(target: str = 'service_monitor_menu') -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton('◀️ Назад', callback_data=target)]]
+    )
+
+
 def info_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [

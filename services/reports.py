@@ -17,20 +17,19 @@ from core.db import (
 )
 from core.formatting import compact_bar, days_left_text, escape_html, format_size
 from services.certificates import get_expiring_certificates
-from services.system_info import get_service_statuses, get_system_update_cache
+from services.system_info import get_service_statuses, get_system_update_cache, _normalize_status, _status_label
 from services.traffic_quota import get_dashboard_traffic_lines, get_quota_status
 from services.vps_service import build_vps_summary
 from services.updater import get_current_version
 
 
 def _service_icon(status: str) -> str:
-    if status == 'active':
+    normalized = _normalize_status(status)
+    if normalized == 'running':
         return '🟢'
-    if status in {'activating', 'reloading'}:
+    if normalized == 'stopped':
         return '🟡'
-    if status in {'missing', 'not-found', 'dead', 'failed'}:
-        return '🔴'
-    return '🟡'
+    return '🔴'
 
 
 def _load_status(snapshot: Dict[str, Any]) -> str:
@@ -68,7 +67,7 @@ async def build_dashboard_text(
     geo = snapshot['public_geo']
     service_lines = []
     for name, status in snapshot['services'].items():
-        service_lines.append(f'{_service_icon(status)} {escape_html(name)}: {escape_html(status)}')
+        service_lines.append(f'{_service_icon(status)} {escape_html(name)}: {escape_html(_status_label(status))}')
 
     due_vps = build_vps_summary(30)
     certs = await get_expiring_certificates(bot_data, 30)

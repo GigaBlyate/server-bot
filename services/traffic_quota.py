@@ -34,6 +34,8 @@ def _ensure_cycle_started() -> None:
         set_setting('traffic_baseline_sent', str(int(counters.bytes_sent)))
         set_setting('traffic_baseline_recv', str(int(counters.bytes_recv)))
         set_setting('traffic_baseline_timestamp', now.isoformat(timespec='seconds'))
+        set_setting('traffic_cycle_accumulated_bytes', '0')
+        set_setting('traffic_last_total_bytes', str(int(counters.bytes_sent) + int(counters.bytes_recv)))
         set_setting('traffic_alert_sent_1tb', 'false')
         set_setting('traffic_alert_sent_300gb', 'false')
         return
@@ -49,8 +51,35 @@ def _ensure_cycle_started() -> None:
         set_setting('traffic_baseline_sent', str(int(counters.bytes_sent)))
         set_setting('traffic_baseline_recv', str(int(counters.bytes_recv)))
         set_setting('traffic_baseline_timestamp', now.isoformat(timespec='seconds'))
+        set_setting('traffic_cycle_accumulated_bytes', '0')
+        set_setting('traffic_last_total_bytes', str(int(counters.bytes_sent) + int(counters.bytes_recv)))
         set_setting('traffic_alert_sent_1tb', 'false')
         set_setting('traffic_alert_sent_300gb', 'false')
+
+
+def _get_cycle_used_bytes(total_bytes: int) -> int:
+    try:
+        accumulated = int(get_setting('traffic_cycle_accumulated_bytes', '0') or 0)
+    except ValueError:
+        accumulated = 0
+    try:
+        last_total = int(get_setting('traffic_last_total_bytes', '0') or 0)
+    except ValueError:
+        last_total = 0
+
+    if last_total <= 0:
+        set_setting('traffic_last_total_bytes', str(total_bytes))
+        return max(0, accumulated)
+
+    if total_bytes >= last_total:
+        accumulated += total_bytes - last_total
+    else:
+        # Счётчики ядра были сброшены (чаще всего после reboot).
+        accumulated += total_bytes
+
+    set_setting('traffic_cycle_accumulated_bytes', str(max(0, accumulated)))
+    set_setting('traffic_last_total_bytes', str(total_bytes))
+    return max(0, accumulated)
 
 
 def get_quota_status() -> Dict[str, Any]:
@@ -73,10 +102,8 @@ def get_quota_status() -> Dict[str, Any]:
         }
 
     _ensure_cycle_started()
-    baseline_sent = int(get_setting('traffic_baseline_sent', '0') or 0)
-    baseline_recv = int(get_setting('traffic_baseline_recv', '0') or 0)
     quota_gb = float(get_setting('traffic_quota_gb', '3072') or 3072)
-    used_bytes = max(0, int(counters.bytes_sent) - baseline_sent) + max(0, int(counters.bytes_recv) - baseline_recv)
+    used_bytes = _get_cycle_used_bytes(total_bytes)
     used_gb = used_bytes / GB
     remaining_gb = max(0.0, quota_gb - used_gb)
     cycle_days = int(get_setting('traffic_cycle_days', '30') or 30)

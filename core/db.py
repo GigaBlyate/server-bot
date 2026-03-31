@@ -39,6 +39,8 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     'traffic_baseline_sent': '0',
     'traffic_baseline_recv': '0',
     'traffic_baseline_timestamp': '',
+    'traffic_cycle_accumulated_bytes': '0',
+    'traffic_last_total_bytes': '0',
     'last_backup_success': '',
     'last_backup_size_mb': '0',
     'dashboard_autorefresh': 'true',
