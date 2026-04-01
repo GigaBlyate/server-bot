@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## 3.1.12
+- traffic: switched package accounting to calendar-month billing periods anchored to the service activation date
+- traffic: added automatic period rollover, period seed synchronization from hoster data, and correct remaining package calculation
+- traffic: added Settings -> Traffic limit controls for package size, activation date, overage price, period sync and manual period reset
+- traffic: added Back and Main menu buttons after traffic package input
+- dashboard: added background automatic checks for server and bot updates with current status in the main menu
+- dashboard: version now shows when bot updates are available, and system updates are reflected automatically
+
 ## 3.1.11
 - dashboard: auto-detect OS name and installed version, hide hostname from main menu
 - dashboard: fixed updates status refresh after successful system upgrade

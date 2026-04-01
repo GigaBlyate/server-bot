@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Tuple
 
 import psutil
 
-from core.db import get_setting
+from core.db import get_json_setting, get_setting, set_setting
 from core.formatting import format_size, format_uptime
 from security import safe_run_command
 from services.geolocation import get_public_ip_info
@@ -45,15 +45,6 @@ SERVICE_CATALOG: List[Dict[str, Any]] = [
     {'key': 'openvpn', 'label': 'OpenVPN', 'systemd_prefix': ['openvpn', 'openvpn-server@', 'openvpn-client@'], 'process': ['openvpn']},
     {'key': 'ocserv', 'label': 'ocserv', 'systemd': ['ocserv'], 'process': ['ocserv-main', 'ocserv']},
     {'key': 'strongswan', 'label': 'strongSwan', 'systemd': ['strongswan', 'strongswan-starter', 'ipsec'], 'process': ['charon', 'starter']},
-    {'key': 'amneziawg', 'label': 'AmneziaWG', 'systemd': ['amneziawg', 'amnezia-wg'], 'process': ['awg', 'amneziawg']},
-    {'key': 'tailscale', 'label': 'Tailscale', 'systemd': ['tailscaled'], 'process': ['tailscaled']},
-    {'key': 'headscale', 'label': 'Headscale', 'systemd': ['headscale'], 'process': ['headscale']},
-    {'key': 'softether', 'label': 'SoftEther', 'systemd': ['vpnserver', 'vpnclient', 'vpnbridge'], 'process': ['vpnserver', 'vpnclient', 'vpnbridge']},
-    {'key': 'xl2tpd', 'label': 'xl2tpd', 'systemd': ['xl2tpd'], 'process': ['xl2tpd']},
-    {'key': 'pptpd', 'label': 'PPTP', 'systemd': ['pptpd'], 'process': ['pptpd']},
-    {'key': 'sstp', 'label': 'SSTP', 'systemd': ['accel-ppp'], 'process': ['accel-pppd']},
-    {'key': 'outline', 'label': 'Outline', 'systemd': ['outline-ss-server'], 'process': ['outline-ss-server']},
-    {'key': 'danted', 'label': 'Dante', 'systemd': ['danted', 'sockd'], 'process': ['danted', 'sockd']},
     {'key': 'xray', 'label': 'Xray', 'systemd': ['xray'], 'process': ['xray']},
     {'key': 'v2ray', 'label': 'V2Ray', 'systemd': ['v2ray'], 'process': ['v2ray']},
     {'key': 'sing-box', 'label': 'sing-box', 'systemd': ['sing-box', 'singbox'], 'process': ['sing-box', 'singbox']},
@@ -61,12 +52,7 @@ SERVICE_CATALOG: List[Dict[str, Any]] = [
     {'key': 'trojan', 'label': 'Trojan', 'systemd': ['trojan', 'trojan-go'], 'process': ['trojan', 'trojan-go']},
     {'key': 'shadowsocks', 'label': 'Shadowsocks', 'systemd': ['shadowsocks-libev', 'shadowsocks-rust', 'ssserver'], 'process': ['ssserver', 'ss-local']},
     {'key': 'gost', 'label': 'Gost', 'systemd': ['gost'], 'process': ['gost']},
-    {'key': 'brook', 'label': 'Brook', 'systemd': ['brook'], 'process': ['brook']},
-    {'key': 'naiveproxy', 'label': 'NaiveProxy', 'systemd': ['naiveproxy'], 'process': ['naive', 'naiveproxy']},
-    {'key': 'cloak', 'label': 'Cloak', 'systemd': ['ck-server', 'cloak-server'], 'process': ['ck-server', 'cloak-server']},
-    {'key': 'mtg', 'label': 'MTG', 'systemd': ['mtg'], 'process': ['mtg']},
-    {'key': 'mtproto-proxy', 'label': 'MTProto Proxy', 'systemd': ['mtproto-proxy', 'mtproxy'], 'process': ['mtproto-proxy', 'mtproxy']},
-    {'key': 'telemt', 'label': 'TeleMT', 'systemd': ['telemt'], 'process': ['telemt']},
+    {'key': 'mtg', 'label': 'MTProto Proxy', 'systemd': ['mtg', 'mtproto-proxy', 'mtproxy'], 'process': ['mtg', 'mtproto-proxy', 'mtproxy', 'telemt']},
 ]
 
 DOCKER_PERMISSION_ERRORS = ('permission denied', 'got permission denied', 'connect: permission denied')
@@ -121,33 +107,6 @@ def _get_os_name() -> str:
 def _humanize_service_name(raw: str) -> str:
     cleaned = raw.replace('.service', '').replace('-', ' ').replace('_', ' ').strip()
     return ' '.join(part.capitalize() if part else '' for part in cleaned.split()) or raw
-
-
-def _normalize_service_query(raw: str) -> str:
-    value = str(raw or '').strip().lower()
-    return value[:-8] if value.endswith('.service') else value
-
-
-def _normalize_status(status: str) -> str:
-    raw = str(status or '').strip().lower()
-    if raw in {'active', 'running', 'online', 'up'}:
-        return 'running'
-    if raw in {'inactive', 'dead', 'exited', 'stopped', 'created'}:
-        return 'stopped'
-    if raw in {'failed', 'crashed', 'error', 'missing', 'not-found', 'unknown'}:
-        return 'missing'
-    if raw in {'activating', 'reloading', 'deactivating'}:
-        return 'stopped'
-    return raw or 'unknown'
-
-
-def _status_label(status: str) -> str:
-    normalized = _normalize_status(status)
-    if normalized == 'running':
-        return 'running'
-    if normalized == 'stopped':
-        return 'stopped'
-    return 'not found'
 
 
 def _manual_service_definitions() -> List[Dict[str, str]]:
@@ -214,39 +173,21 @@ async def _nic_models() -> List[str]:
 
 
 async def _list_systemd_units() -> Dict[str, str]:
-    result: Dict[str, str] = {}
-
     code, out, err = await safe_run_command(
         ['systemctl', 'list-units', '--type=service', '--all', '--no-legend', '--no-pager'],
         timeout=12,
     )
     raw = out or err
-    if code == 0 or raw.strip():
-        for line in raw.splitlines():
-            chunks = line.split()
-            if len(chunks) < 4:
-                continue
-            unit, _, active, sub = chunks[:4]
-            norm = _normalize_service_query(unit)
-            status = sub if active == 'active' else active
-            result[norm] = _normalize_status(status)
-
-    code, out, err = await safe_run_command(
-        ['systemctl', 'list-unit-files', '--type=service', '--no-legend', '--no-pager'],
-        timeout=12,
-    )
-    raw = out or err
-    if code == 0 or raw.strip():
-        for line in raw.splitlines():
-            chunks = line.split()
-            if len(chunks) < 2:
-                continue
-            unit, state = chunks[:2]
-            norm = _normalize_service_query(unit)
-            if norm not in result:
-                result[norm] = 'stopped'
-            elif result[norm] == 'missing' and state.lower() not in {'masked', 'bad'}:
-                result[norm] = 'stopped'
+    if code != 0 and not raw.strip():
+        return {}
+    result: Dict[str, str] = {}
+    for line in raw.splitlines():
+        chunks = line.split()
+        if len(chunks) < 4:
+            continue
+        unit, _, active, sub = chunks[:4]
+        norm = unit.replace('.service', '').strip()
+        result[norm] = sub if active == 'active' else active
     return result
 
 
@@ -265,7 +206,7 @@ def _list_processes() -> List[Tuple[str, str]]:
 
 async def _list_docker_containers() -> Tuple[Dict[str, str], bool]:
     code, out, err = await safe_run_command(
-        ['docker', 'ps', '-a', '--format', '{{.Names}}	{{.Status}}'],
+        ['docker', 'ps', '--format', '{{.Names}}\t{{.Status}}'],
         timeout=8,
     )
     permission_needed = False
@@ -279,12 +220,11 @@ async def _list_docker_containers() -> Tuple[Dict[str, str], bool]:
     for line in (out or '').splitlines():
         if not line.strip():
             continue
-        if '	' in line:
-            name, status = line.split('	', 1)
+        if '\t' in line:
+            name, status = line.split('\t', 1)
         else:
-            name, status = line.strip(), 'unknown'
-        normalized = 'running' if any(x in status.lower() for x in ('up', 'running', 'healthy')) else 'stopped'
-        result[name.strip().lower()] = normalized
+            name, status = line.strip(), 'running'
+        result[name.strip().lower()] = status.strip() or 'running'
     return result, permission_needed
 
 
@@ -295,28 +235,27 @@ def _status_from_catalog(
     docker_containers: Dict[str, str],
 ) -> Tuple[str, str]:
     for unit in entry.get('systemd', []):
-        status = systemd_units.get(_normalize_service_query(unit))
+        status = systemd_units.get(unit)
         if status:
             return entry['label'], status
     for prefix in entry.get('systemd_prefix', []):
-        normalized_prefix = _normalize_service_query(prefix)
         for unit_name, status in sorted(systemd_units.items()):
-            if unit_name.startswith(normalized_prefix):
-                suffix = unit_name[len(normalized_prefix):].strip('@-._')
+            if unit_name.startswith(prefix):
+                suffix = unit_name[len(prefix):].strip('@-._')
                 label = entry['label'] if not suffix else f"{entry['label']} {suffix}"
                 return label, status
     for keyword in entry.get('process', []):
         lower_keyword = str(keyword).lower()
         for proc_name, cmdline in processes:
-            if lower_keyword and (lower_keyword == proc_name or lower_keyword in cmdline):
-                return entry['label'], 'running'
+            if lower_keyword and (lower_keyword in proc_name or lower_keyword in cmdline):
+                return entry['label'], 'active'
     for docker_name in entry.get('docker', []):
         lower_name = str(docker_name).lower()
         for container, status in docker_containers.items():
-            if lower_name == container or lower_name in container:
-                return entry['label'], status
+            if lower_name in container:
+                return entry['label'], 'active' if 'up' in status.lower() or 'running' in status.lower() else status
     if entry.get('docker_builtin') and docker_containers:
-        return entry['label'], 'running'
+        return entry['label'], 'active'
     return '', ''
 
 
@@ -327,64 +266,20 @@ def _status_for_manual_service(
     docker_containers: Dict[str, str],
 ) -> str:
     service_type = item['type']
-    name = _normalize_service_query(item['name'])
+    name = item['name'].strip().lower()
     if service_type == 'systemd':
         return systemd_units.get(name, 'missing')
     if service_type == 'process':
         for proc_name, cmdline in processes:
-            if name == proc_name or name in cmdline:
-                return 'running'
+            if name in proc_name or name in cmdline:
+                return 'active'
         return 'missing'
     if service_type == 'docker':
         for container, status in docker_containers.items():
-            if name == container or name in container:
-                return status
+            if name in container:
+                return 'active' if 'up' in status.lower() or 'running' in status.lower() else status
         return 'missing'
     return 'unknown'
-
-
-async def resolve_manual_service_query(
-    service_type: str,
-    query: str,
-    *,
-    include_docker: bool = True,
-) -> Dict[str, str] | None:
-    service_type = str(service_type or '').strip().lower()
-    q = _normalize_service_query(query)
-    if service_type not in {'systemd', 'process', 'docker'} or not q:
-        return None
-
-    systemd_units = await _list_systemd_units() if service_type == 'systemd' else {}
-    processes = _list_processes() if service_type == 'process' else []
-    docker_containers, _ = await _list_docker_containers() if include_docker and service_type == 'docker' else ({}, False)
-
-    if service_type == 'systemd':
-        if q in systemd_units:
-            return {'type': 'systemd', 'name': q, 'label': _humanize_service_name(q), 'status': systemd_units[q]}
-        matches = [(name, status) for name, status in systemd_units.items() if q in name]
-        if len(matches) == 1:
-            name, status = matches[0]
-            return {'type': 'systemd', 'name': name, 'label': _humanize_service_name(name), 'status': status}
-        return None
-
-    if service_type == 'process':
-        candidates: Dict[str, str] = {}
-        for proc_name, cmdline in processes:
-            if q == proc_name or q in cmdline:
-                canonical = proc_name or q
-                candidates[canonical] = canonical
-        if not candidates:
-            return None
-        name = sorted(candidates)[0]
-        return {'type': 'process', 'name': name, 'label': _humanize_service_name(name), 'status': 'running'}
-
-    if service_type == 'docker':
-        matches = [(name, status) for name, status in docker_containers.items() if q == name or q in name]
-        if not matches:
-            return None
-        name, status = sorted(matches, key=lambda item: (item[0] != q, len(item[0])))[0]
-        return {'type': 'docker', 'name': name, 'label': _humanize_service_name(name), 'status': status}
-    return None
 
 
 async def get_service_statuses(bot_data: Dict[str, Any], force: bool = False) -> Dict[str, str]:
@@ -439,14 +334,45 @@ async def get_system_update_cache(bot_data: Dict[str, Any]) -> Dict[str, Any]:
     cached = bot_data.get('system_updates_cache')
     if cached and time.time() - cached.get('cached_at', 0) < UPDATE_CACHE_TTL:
         return cached['data']
-    return {'count': None, 'packages': []}
+    raw_count = str(get_setting('system_updates_count', '') or '').strip()
+    count = int(raw_count) if raw_count.isdigit() else None
+    packages = get_json_setting('system_updates_packages_json', [])
+    checked_at = str(get_setting('system_updates_checked_at', '') or '')
+    data = {'count': count, 'packages': packages, 'checked_at': checked_at}
+    bot_data['system_updates_cache'] = {'cached_at': time.time(), 'data': data}
+    return data
 
 
 async def set_system_update_cache(bot_data: Dict[str, Any], count: int, packages: List[str]) -> None:
+    data = {'count': count, 'packages': packages, 'checked_at': datetime.now().isoformat(timespec='seconds')}
     bot_data['system_updates_cache'] = {
         'cached_at': time.time(),
-        'data': {'count': count, 'packages': packages},
+        'data': data,
     }
+    set_setting('system_updates_count', str(count))
+    set_setting('system_updates_packages_json', json.dumps(packages, ensure_ascii=False))
+    set_setting('system_updates_checked_at', data['checked_at'])
+
+
+async def get_bot_update_cache(bot_data: Dict[str, Any]) -> Dict[str, Any]:
+    cached = bot_data.get('bot_updates_cache')
+    if cached and time.time() - cached.get('cached_at', 0) < UPDATE_CACHE_TTL:
+        return cached['data']
+    raw_count = str(get_setting('bot_updates_count', '') or '').strip()
+    count = int(raw_count) if raw_count.isdigit() else None
+    commits = get_json_setting('bot_updates_commits_json', [])
+    checked_at = str(get_setting('bot_updates_checked_at', '') or '')
+    data = {'count': count, 'commits': commits, 'checked_at': checked_at}
+    bot_data['bot_updates_cache'] = {'cached_at': time.time(), 'data': data}
+    return data
+
+
+async def set_bot_update_cache(bot_data: Dict[str, Any], count: int, commits: List[str]) -> None:
+    data = {'count': count, 'commits': commits, 'checked_at': datetime.now().isoformat(timespec='seconds')}
+    bot_data['bot_updates_cache'] = {'cached_at': time.time(), 'data': data}
+    set_setting('bot_updates_count', str(count))
+    set_setting('bot_updates_commits_json', json.dumps(commits, ensure_ascii=False))
+    set_setting('bot_updates_checked_at', data['checked_at'])
 
 
 async def get_server_info(bot_data: Dict[str, Any]) -> Dict[str, Any]:

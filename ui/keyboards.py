@@ -37,12 +37,6 @@ def back_button(target: str = 'menu') -> InlineKeyboardMarkup:
     )
 
 
-def prompt_back_keyboard(target: str = 'service_monitor_menu') -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton('◀️ Назад', callback_data=target)]]
-    )
-
-
 def info_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
@@ -94,23 +88,45 @@ def settings_keyboard(settings: Dict[str, str]) -> InlineKeyboardMarkup:
     )
 
 
+
+
+def traffic_post_input_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton('◀️ Назад', callback_data='traffic_menu')],
+            [InlineKeyboardButton('🏠 Главное меню', callback_data='menu')],
+        ]
+    )
+
 def traffic_keyboard(settings: Dict[str, str]) -> InlineKeyboardMarkup:
+    mode = settings.get('traffic_mode', 'unlimited')
+    limit = settings.get('traffic_quota_gb', '3072')
+    activation = settings.get('traffic_activation_date', '') or 'не задана'
+    overage = settings.get('traffic_overage_rub_per_tb', '200') or '200'
+    mode_label = '∞ Безлимит' if mode == 'unlimited' else '📦 Пакет'
     return InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton('Безлимит', callback_data='traffic_mode_unlimited'),
                 InlineKeyboardButton('Пакет', callback_data='traffic_mode_quota'),
             ],
+            [InlineKeyboardButton(f'Режим: {mode_label}', callback_data='noop')],
             [InlineKeyboardButton(
-                f'Размер пакета: {settings.get("traffic_quota_gb", "3072")} GB',
+                f'Размер пакета: {limit} GB',
                 callback_data='traffic_set_quota',
             )],
             [InlineKeyboardButton(
-                f'Период: {settings.get("traffic_cycle_days", "30")} дн.',
-                callback_data='traffic_set_cycle',
+                f'Дата активации: {activation}',
+                callback_data='traffic_set_activation',
             )],
-            [InlineKeyboardButton('Сбросить текущий цикл', callback_data='traffic_reset_cycle')],
+            [InlineKeyboardButton(
+                f'Перерасход: {overage} RUB/TB',
+                callback_data='traffic_set_overage',
+            )],
+            [InlineKeyboardButton('Синхронизировать текущее использование', callback_data='traffic_sync_used')],
+            [InlineKeyboardButton('Сбросить текущий период вручную', callback_data='traffic_reset_cycle')],
             [InlineKeyboardButton('◀️ Назад', callback_data='settings_menu')],
+            [InlineKeyboardButton('🏠 Главное меню', callback_data='menu')],
         ]
     )
 

@@ -17,19 +17,21 @@ from core.db import (
 )
 from core.formatting import compact_bar, days_left_text, escape_html, format_size
 from services.certificates import get_expiring_certificates
-from services.system_info import get_service_statuses, get_system_update_cache, _normalize_status, _status_label
+from services.system_info import get_service_statuses, get_system_update_cache, get_bot_update_cache
 from services.traffic_quota import get_dashboard_traffic_lines, get_quota_status
 from services.vps_service import build_vps_summary
 from services.updater import get_current_version
 
 
 def _service_icon(status: str) -> str:
-    normalized = _normalize_status(status)
-    if normalized == 'running':
+    status = str(status).lower()
+    if status in {'active', 'running'}:
         return '🟢'
-    if normalized == 'stopped':
+    if status in {'inactive', 'stopped', 'exited'}:
         return '🟡'
-    return '🔴'
+    if status in {'missing', 'not-found', 'dead', 'failed', 'error'}:
+        return '🔴'
+    return '🟡'
 
 
 def _load_status(snapshot: Dict[str, Any]) -> str:
@@ -67,7 +69,16 @@ async def build_dashboard_text(
     geo = snapshot['public_geo']
     service_lines = []
     for name, status in snapshot['services'].items():
-        service_lines.append(f'{_service_icon(status)} {escape_html(name)}: {escape_html(_status_label(status))}')
+        raw = str(status).lower()
+        if raw in {'active'}:
+            shown = 'running'
+        elif raw in {'inactive', 'exited'}:
+            shown = 'stopped'
+        elif raw in {'missing', 'not-found'}:
+            shown = 'not found'
+        else:
+            shown = raw
+        service_lines.append(f'{_service_icon(raw)} {escape_html(name)}: {escape_html(shown)}')
 
     due_vps = build_vps_summary(30)
     certs = await get_expiring_certificates(bot_data, 30)
@@ -79,10 +90,15 @@ async def build_dashboard_text(
     tx = format_size(float(network_state.get('tx_rate_bps', 0.0)))
     rx = format_size(float(network_state.get('rx_rate_bps', 0.0)))
     updates_cache = await get_system_update_cache(bot_data)
+    bot_updates_cache = await get_bot_update_cache(bot_data)
     updates = updates_cache.get('count')
-    updates_line = 'Проверка не выполнялась'
+    bot_updates = bot_updates_cache.get('count')
+    updates_line = 'Проверяется автоматически'
     if updates is not None:
         updates_line = 'Система актуальна' if int(updates) == 0 else f'Доступно обновлений: {updates}'
+    bot_version_line = escape_html(get_current_version())
+    if bot_updates is not None and int(bot_updates) > 0:
+        bot_version_line = f'{bot_version_line} • есть обновления'
 
     text = [
         f'👋 <b>{escape_html(first_name or "Администратор")}</b>, это главное меню <b>{escape_html(config.SERVER_NAME)}</b>.',
@@ -97,7 +113,7 @@ async def build_dashboard_text(
         '<b>Сервер</b>',
         f'• ОС: {escape_html(snapshot["os_name"])}',
         f'• {escape_html(geo.get("city", "N/A"))}, {escape_html(geo.get("country", "N/A"))} • {escape_html(geo.get("ip", "N/A"))}',
-        f'• Версия бота: {escape_html(get_current_version())}',
+        f'• Версия бота: {bot_version_line}',
         f'• Нагрузка: {_load_status(snapshot)}',
         f'• Обновления: {updates_line}',
     ]
