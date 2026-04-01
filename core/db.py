@@ -32,27 +32,17 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     'auto_update': 'false',
     'traffic_mode': 'unlimited',
     'traffic_quota_gb': '3072',
-    'traffic_activation_date': '',
-    'traffic_overage_rub_per_tb': '200',
-    'traffic_total_bytes': '0',
-    'traffic_last_counter_bytes': '0',
-    'traffic_last_counter_updated_at': '',
-    'traffic_today_date': '',
-    'traffic_today_anchor_total_bytes': '0',
-    'traffic_yesterday_bytes': '0',
-    'traffic_billing_period_start': '',
-    'traffic_billing_period_end': '',
-    'traffic_period_anchor_total_bytes': '0',
-    'traffic_period_anchor_set_at': '',
-    'traffic_period_seed_bytes': '0',
+    'traffic_cycle_days': '30',
+    'traffic_cycle_start_date': '',
     'traffic_alert_sent_1tb': 'false',
     'traffic_alert_sent_300gb': 'false',
-    'system_updates_count': '',
-    'system_updates_packages_json': '[]',
-    'system_updates_checked_at': '',
-    'bot_updates_count': '',
-    'bot_updates_commits_json': '[]',
-    'bot_updates_checked_at': '',
+    'traffic_baseline_sent': '0',
+    'traffic_baseline_recv': '0',
+    'traffic_baseline_timestamp': '',
+    'traffic_cycle_accumulated_bytes': '0',
+    'traffic_last_total_bytes': '0',
+    'traffic_lifetime_accumulated_bytes': '0',
+    'traffic_last_raw_total_bytes': '0',
     'last_backup_success': '',
     'last_backup_size_mb': '0',
     'dashboard_autorefresh': 'true',
@@ -211,17 +201,6 @@ def get_all_settings() -> Dict[str, str]:
     rows = db_execute('SELECT key, value FROM settings ORDER BY key', fetch=True) or []
     return {row['key']: row['value'] for row in rows}
 
-
-
-
-def get_json_setting(key: str, default: Any) -> Any:
-    raw = get_setting(key, '')
-    if raw in (None, ''):
-        return default
-    try:
-        return json.loads(str(raw))
-    except Exception:
-        return default
 
 def add_alert_event(alert_type: str, message: str) -> None:
     db_execute(

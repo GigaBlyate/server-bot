@@ -1,12 +1,14 @@
 # CHANGELOG
 
-## 3.1.12
-- traffic: switched package accounting to calendar-month billing periods anchored to the service activation date
-- traffic: added automatic period rollover, period seed synchronization from hoster data, and correct remaining package calculation
-- traffic: added Settings -> Traffic limit controls for package size, activation date, overage price, period sync and manual period reset
-- traffic: added Back and Main menu buttons after traffic package input
-- dashboard: added background automatic checks for server and bot updates with current status in the main menu
-- dashboard: version now shows when bot updates are available, and system updates are reflected automatically
+## 3.1.13
+
+- Исправлен расчёт общего трафика: показатель "всего" теперь хранится как монотонный накопительный счётчик и не отстаёт от трафика за период после reboot.
+
+
+- key services: manual add now validates real systemd services, real processes and real Docker containers before saving
+- key services: added Back and Main Menu navigation after manual add and after failed lookup
+- key services: synced main menu service list with auto-detected services and expanded rescan coverage for common service paths
+- logging: benign Telegram "Message is not modified" events moved out of normal info noise
 
 ## 3.1.11
 - dashboard: auto-detect OS name and installed version, hide hostname from main menu
