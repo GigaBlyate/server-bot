@@ -5,11 +5,8 @@ import logging
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from telegram.ext import ContextTypes
-
 import config
 from security import safe_run_command
-from services.system_info import set_bot_update_cache, set_system_update_cache
 
 logger = logging.getLogger(__name__)
 ProgressCb = Optional[Callable[[str], None]]
@@ -123,10 +120,3 @@ async def update_bot_code(progress_cb: ProgressCb = None) -> Tuple[bool, str]:
             return False, last_output or f'{title}: команда завершилась с кодом {code}'
 
     return True, last_output or 'Код бота обновлён.'
-
-
-async def update_status_background_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    count, packages = await get_upgradable_packages(limit=10)
-    await set_system_update_cache(context.application.bot_data, count, packages)
-    bot_count, commits, _ = await get_bot_update_status(limit=5)
-    await set_bot_update_cache(context.application.bot_data, bot_count, commits)

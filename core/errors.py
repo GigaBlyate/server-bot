@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     error_text = str(context.error)
     if 'message is not modified' in error_text.lower():
-        logger.info('Skipped benign Telegram error: %s', error_text)
+        logger.debug('Skipped benign Telegram error: %s', error_text)
         return
 
     logger.exception('Unhandled exception', exc_info=context.error)
