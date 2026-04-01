@@ -1,14 +1,13 @@
+## 3.1.14
+- key services: manual add now validates real systemd units, live processes and existing docker containers before saving
+- key services: added back and main menu buttons after manual add success/failure and in service monitor prompts
+- key services: unified alias detection for popular services (x-ui/3x-ui, Xray/V2Ray, MySQL/MariaDB, MTProto/TeleMT and more)
+- key services: status logic now distinguishes running, stopped and not found; dashboard and settings use the same detection source
+- update: bot self-update restart now passes the service name to root helper
+- install: root helper now supports both legacy subcommands and generic restart/status/logs actions
+- logs: benign Telegram "Message is not modified" moved from INFO to DEBUG
+
 # CHANGELOG
-
-## 3.1.13
-
-- Исправлен расчёт общего трафика: показатель "всего" теперь хранится как монотонный накопительный счётчик и не отстаёт от трафика за период после reboot.
-
-
-- key services: manual add now validates real systemd services, real processes and real Docker containers before saving
-- key services: added Back and Main Menu navigation after manual add and after failed lookup
-- key services: synced main menu service list with auto-detected services and expanded rescan coverage for common service paths
-- logging: benign Telegram "Message is not modified" events moved out of normal info noise
 
 ## 3.1.11
 - dashboard: auto-detect OS name and installed version, hide hostname from main menu

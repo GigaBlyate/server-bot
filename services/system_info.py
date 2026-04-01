@@ -6,16 +6,16 @@ import logging
 import os
 import platform
 import re
+import shutil
 import socket
 import time
 from datetime import datetime
 from pathlib import Path
-from collections import OrderedDict
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 import psutil
 
-from core.db import get_setting
+from core.db import get_json_setting, get_setting
 from core.formatting import format_size, format_uptime
 from security import safe_run_command
 from services.geolocation import get_public_ip_info
@@ -23,82 +23,39 @@ from services.geolocation import get_public_ip_info
 logger = logging.getLogger(__name__)
 SERVICE_CACHE_TTL = 90
 UPDATE_CACHE_TTL = 1800
-
-SERVICE_CATALOG: List[Dict[str, Any]] = [
-    {'key': 'server-bot', 'label': 'G-PANEL', 'systemd': ['server-bot']},
-    {'key': 'ssh', 'label': 'SSH', 'systemd': ['ssh', 'sshd'], 'process': ['sshd']},
-    {'key': 'nginx', 'label': 'Nginx', 'systemd': ['nginx'], 'process': ['nginx']},
-    {'key': 'apache', 'label': 'Apache', 'systemd': ['apache2', 'httpd'], 'process': ['apache2', 'httpd']},
-    {'key': 'caddy', 'label': 'Caddy', 'systemd': ['caddy'], 'process': ['caddy']},
-    {'key': 'docker', 'label': 'Docker', 'systemd': ['docker'], 'process': ['dockerd'], 'docker_builtin': True},
-    {'key': 'docker-compose', 'label': 'Docker Compose', 'process': ['docker-compose', 'compose']},
-    {'key': 'containerd', 'label': 'containerd', 'systemd': ['containerd'], 'process': ['containerd']},
-    {'key': 'podman', 'label': 'Podman', 'systemd': ['podman'], 'process': ['podman']},
-    {'key': 'redis', 'label': 'Redis', 'systemd': ['redis', 'redis-server'], 'process': ['redis-server']},
-    {'key': 'mysql', 'label': 'MySQL/MariaDB', 'systemd': ['mysql', 'mariadb'], 'process': ['mysqld', 'mariadbd']},
-    {'key': 'postgresql', 'label': 'PostgreSQL', 'systemd': ['postgresql'], 'process': ['postgres', 'postgresql']},
-    {'key': 'fail2ban', 'label': 'Fail2Ban', 'systemd': ['fail2ban'], 'process': ['fail2ban-server']},
-    {'key': 'certbot', 'label': 'Certbot', 'systemd': ['certbot'], 'process': ['certbot']},
-    {'key': 'x-ui', 'label': 'X-UI', 'systemd': ['x-ui'], 'process': ['x-ui']},
-    {'key': '3x-ui', 'label': '3X-UI', 'systemd': ['3x-ui'], 'process': ['3x-ui']},
-    {'key': 'marzban', 'label': 'Marzban', 'systemd': ['marzban', 'marzban-node'], 'process': ['marzban', 'marzban-node'], 'docker': ['marzban', 'marzban-node']},
-    {'key': 'remnawave', 'label': 'Remnawave', 'systemd': ['remnawave'], 'process': ['remnawave'], 'docker': ['remnawave']},
-    {'key': 'wireguard', 'label': 'WireGuard', 'systemd_prefix': ['wg-quick@', 'wireguard'], 'process': ['wg-quick', 'wireguard-go']},
-    {'key': 'openvpn', 'label': 'OpenVPN', 'systemd_prefix': ['openvpn', 'openvpn-server@', 'openvpn-client@'], 'process': ['openvpn']},
-    {'key': 'ocserv', 'label': 'ocserv', 'systemd': ['ocserv'], 'process': ['ocserv-main', 'ocserv']},
-    {'key': 'strongswan', 'label': 'strongSwan', 'systemd': ['strongswan', 'strongswan-starter', 'ipsec'], 'process': ['charon', 'starter']},
-    {'key': 'amneziawg', 'label': 'AmneziaWG', 'systemd': ['amneziawg', 'amnezia-wg'], 'process': ['awg', 'amneziawg']},
-    {'key': 'tailscale', 'label': 'Tailscale', 'systemd': ['tailscaled'], 'process': ['tailscaled']},
-    {'key': 'headscale', 'label': 'Headscale', 'systemd': ['headscale'], 'process': ['headscale']},
-    {'key': 'softether', 'label': 'SoftEther', 'systemd': ['vpnserver', 'vpnclient', 'vpnbridge'], 'process': ['vpnserver', 'vpnclient', 'vpnbridge']},
-    {'key': 'xl2tpd', 'label': 'xl2tpd', 'systemd': ['xl2tpd'], 'process': ['xl2tpd']},
-    {'key': 'pptpd', 'label': 'PPTP', 'systemd': ['pptpd'], 'process': ['pptpd']},
-    {'key': 'sstp', 'label': 'SSTP', 'systemd': ['accel-ppp'], 'process': ['accel-pppd']},
-    {'key': 'outline', 'label': 'Outline', 'systemd': ['outline-ss-server'], 'process': ['outline-ss-server']},
-    {'key': 'danted', 'label': 'Dante', 'systemd': ['danted', 'sockd'], 'process': ['danted', 'sockd']},
-    {'key': 'xray', 'label': 'Xray', 'systemd': ['xray'], 'process': ['xray']},
-    {'key': 'v2ray', 'label': 'V2Ray', 'systemd': ['v2ray'], 'process': ['v2ray']},
-    {'key': 'sing-box', 'label': 'sing-box', 'systemd': ['sing-box', 'singbox'], 'process': ['sing-box', 'singbox']},
-    {'key': 'hysteria', 'label': 'Hysteria', 'systemd': ['hysteria-server', 'hysteria', 'hysteria2'], 'process': ['hysteria', 'hysteria2']},
-    {'key': 'trojan', 'label': 'Trojan', 'systemd': ['trojan', 'trojan-go'], 'process': ['trojan', 'trojan-go']},
-    {'key': 'shadowsocks', 'label': 'Shadowsocks', 'systemd': ['shadowsocks-libev', 'shadowsocks-rust', 'ssserver'], 'process': ['ssserver', 'ss-local']},
-    {'key': 'gost', 'label': 'Gost', 'systemd': ['gost'], 'process': ['gost']},
-    {'key': 'brook', 'label': 'Brook', 'systemd': ['brook'], 'process': ['brook']},
-    {'key': 'naiveproxy', 'label': 'NaiveProxy', 'systemd': ['naiveproxy'], 'process': ['naive', 'naiveproxy']},
-    {'key': 'cloak', 'label': 'Cloak', 'systemd': ['ck-server', 'cloak-server'], 'process': ['ck-server', 'cloak-server']},
-    {'key': 'mtg', 'label': 'MTG', 'systemd': ['mtg'], 'process': ['mtg']},
-    {'key': 'mtproto-proxy', 'label': 'MTProto Proxy', 'systemd': ['mtproto-proxy', 'mtproxy'], 'process': ['mtproto-proxy', 'mtproxy']},
-    {'key': 'telemt', 'label': 'TeleMT', 'systemd': ['telemt'], 'process': ['telemt']},
+DOCKER_PERMISSION_ERRORS = ('permission denied', 'got permission denied', 'connect: permission denied')
+SCAN_DIRECTORIES = [
+    '/etc', '/opt', '/srv', '/usr/local/bin', '/usr/local/sbin', '/usr/bin', '/usr/sbin', '/var/lib',
 ]
 
-DOCKER_PERMISSION_ERRORS = ('permission denied', 'got permission denied', 'connect: permission denied')
-
-KNOWN_SERVICE_ARTEFACTS: List[Dict[str, Any]] = [
-    {'label': 'Xray', 'paths': ['/usr/local/bin/xray', '/usr/bin/xray', '/etc/xray', '/usr/local/etc/xray']},
-    {'label': 'V2Ray', 'paths': ['/usr/local/bin/v2ray', '/usr/bin/v2ray', '/etc/v2ray']},
-    {'label': 'sing-box', 'paths': ['/usr/local/bin/sing-box', '/usr/bin/sing-box', '/etc/sing-box']},
-    {'label': 'Hysteria', 'paths': ['/usr/local/bin/hysteria', '/usr/local/bin/hysteria2', '/etc/hysteria', '/etc/hysteria2']},
-    {'label': 'Trojan', 'paths': ['/usr/local/bin/trojan', '/usr/local/bin/trojan-go', '/etc/trojan', '/etc/trojan-go']},
-    {'label': 'Shadowsocks', 'paths': ['/usr/bin/ssserver', '/usr/local/bin/ssserver', '/etc/shadowsocks-libev', '/etc/shadowsocks-rust']},
-    {'label': 'Gost', 'paths': ['/usr/local/bin/gost', '/usr/bin/gost', '/etc/gost']},
-    {'label': 'Brook', 'paths': ['/usr/local/bin/brook', '/usr/bin/brook', '/etc/brook']},
-    {'label': 'NaiveProxy', 'paths': ['/usr/local/bin/naive', '/usr/local/bin/naiveproxy', '/etc/naiveproxy']},
-    {'label': 'Cloak', 'paths': ['/usr/local/bin/ck-server', '/usr/local/bin/cloak-server', '/etc/cloak']},
-    {'label': 'MTG', 'paths': ['/usr/local/bin/mtg', '/usr/bin/mtg', '/etc/mtg']},
-    {'label': 'MTProto Proxy', 'paths': ['/usr/local/bin/mtproto-proxy', '/usr/local/bin/mtproxy', '/etc/mtproto-proxy', '/etc/mtproxy']},
-    {'label': 'TeleMT', 'paths': ['/usr/local/bin/telemt', '/usr/bin/telemt', '/opt/telemt', '/etc/telemt']},
-    {'label': 'WireGuard', 'paths': ['/etc/wireguard']},
-    {'label': 'OpenVPN', 'paths': ['/etc/openvpn', '/etc/openvpn/server']},
-    {'label': 'OpenConnect', 'paths': ['/etc/ocserv']},
-    {'label': 'strongSwan', 'paths': ['/etc/ipsec.conf', '/etc/ipsec.d']},
-    {'label': 'Outline', 'paths': ['/opt/outline', '/opt/outline-ss-server', '/usr/local/bin/outline-ss-server']},
-    {'label': 'SoftEther', 'paths': ['/usr/local/vpnserver', '/usr/local/vpnclient', '/usr/local/vpnbridge']},
-    {'label': 'AmneziaWG', 'paths': ['/etc/amnezia', '/etc/amneziawg']},
-    {'label': 'Tailscale', 'paths': ['/var/lib/tailscale', '/usr/sbin/tailscaled']},
-    {'label': 'Headscale', 'paths': ['/etc/headscale', '/usr/bin/headscale']},
-    {'label': '3X-UI', 'paths': ['/etc/x-ui', '/usr/local/x-ui', '/opt/x-ui', '/etc/3x-ui', '/usr/local/3x-ui']},
-    {'label': 'Marzban', 'paths': ['/opt/marzban', '/etc/marzban']},
-    {'label': 'Remnawave', 'paths': ['/opt/remnawave', '/etc/remnawave']},
+SERVICE_CATALOG: List[Dict[str, Any]] = [
+    {'key': 'server-bot', 'label': 'G-PANEL', 'aliases': ['server-bot', 'g-panel'], 'systemd': ['server-bot'], 'process': ['bot.py'], 'binary': ['server-bot-rootctl']},
+    {'key': 'ssh', 'label': 'SSH', 'aliases': ['ssh', 'sshd'], 'systemd': ['ssh', 'sshd'], 'process': ['sshd']},
+    {'key': 'nginx', 'label': 'Nginx', 'aliases': ['nginx'], 'systemd': ['nginx'], 'process': ['nginx'], 'binary': ['nginx'], 'config': ['/etc/nginx/nginx.conf']},
+    {'key': 'apache', 'label': 'Apache', 'aliases': ['apache', 'apache2', 'httpd'], 'systemd': ['apache2', 'httpd'], 'process': ['apache2', 'httpd'], 'binary': ['apache2', 'httpd']},
+    {'key': 'caddy', 'label': 'Caddy', 'aliases': ['caddy'], 'systemd': ['caddy'], 'process': ['caddy'], 'binary': ['caddy']},
+    {'key': 'docker', 'label': 'Docker', 'aliases': ['docker', 'dockerd'], 'systemd': ['docker'], 'process': ['dockerd'], 'docker_builtin': True, 'binary': ['docker']},
+    {'key': 'containerd', 'label': 'containerd', 'aliases': ['containerd'], 'systemd': ['containerd'], 'process': ['containerd'], 'binary': ['containerd']},
+    {'key': 'podman', 'label': 'Podman', 'aliases': ['podman'], 'systemd': ['podman'], 'process': ['podman'], 'binary': ['podman']},
+    {'key': 'redis', 'label': 'Redis', 'aliases': ['redis', 'redis-server'], 'systemd': ['redis', 'redis-server'], 'process': ['redis-server'], 'binary': ['redis-server']},
+    {'key': 'mysql', 'label': 'MySQL/MariaDB', 'aliases': ['mysql', 'mariadb', 'mysqld', 'mariadbd'], 'systemd': ['mysql', 'mariadb'], 'process': ['mysqld', 'mariadbd'], 'binary': ['mysqld', 'mariadbd']},
+    {'key': 'postgresql', 'label': 'PostgreSQL', 'aliases': ['postgresql', 'postgres'], 'systemd': ['postgresql'], 'process': ['postgres', 'postgresql'], 'binary': ['postgres']},
+    {'key': 'fail2ban', 'label': 'Fail2Ban', 'aliases': ['fail2ban', 'fail2ban-server'], 'systemd': ['fail2ban'], 'process': ['fail2ban-server'], 'binary': ['fail2ban-server']},
+    {'key': 'certbot', 'label': 'Certbot', 'aliases': ['certbot'], 'systemd': ['certbot'], 'process': ['certbot'], 'binary': ['certbot']},
+    {'key': 'x-ui-family', 'label': '3X-UI', 'aliases': ['3x-ui', 'x-ui', 'xui'], 'systemd': ['3x-ui', 'x-ui'], 'process': ['3x-ui', 'x-ui', 'x-ui-linux', 'x-ui-amd64'], 'docker': ['3x-ui', 'x-ui'], 'binary': ['x-ui', '3x-ui'], 'config': ['/etc/x-ui', '/etc/3x-ui', '/usr/local/x-ui', '/opt/x-ui', '/opt/3x-ui']},
+    {'key': 'marzban', 'label': 'Marzban', 'aliases': ['marzban', 'marzban-node'], 'systemd': ['marzban', 'marzban-node'], 'process': ['marzban', 'marzban-node'], 'docker': ['marzban', 'marzban-node'], 'binary': ['marzban', 'marzban-node'], 'config': ['/opt/marzban', '/etc/marzban']},
+    {'key': 'remnawave', 'label': 'Remnawave', 'aliases': ['remnawave'], 'systemd': ['remnawave'], 'process': ['remnawave'], 'docker': ['remnawave'], 'binary': ['remnawave'], 'config': ['/opt/remnawave', '/etc/remnawave']},
+    {'key': 'wireguard', 'label': 'WireGuard', 'aliases': ['wireguard', 'wg', 'wg-quick'], 'systemd_prefix': ['wg-quick@', 'wireguard'], 'process': ['wg-quick', 'wireguard-go'], 'binary': ['wg', 'wg-quick', 'wireguard-go'], 'config': ['/etc/wireguard']},
+    {'key': 'openvpn', 'label': 'OpenVPN', 'aliases': ['openvpn', 'openvpn-server', 'openvpn-client'], 'systemd_prefix': ['openvpn', 'openvpn-server@', 'openvpn-client@'], 'process': ['openvpn'], 'binary': ['openvpn'], 'config': ['/etc/openvpn']},
+    {'key': 'ocserv', 'label': 'ocserv', 'aliases': ['ocserv'], 'systemd': ['ocserv'], 'process': ['ocserv-main', 'ocserv'], 'binary': ['ocserv']},
+    {'key': 'strongswan', 'label': 'strongSwan', 'aliases': ['strongswan', 'ipsec', 'charon'], 'systemd': ['strongswan', 'strongswan-starter', 'ipsec'], 'process': ['charon', 'starter'], 'binary': ['ipsec', 'charon']},
+    {'key': 'xray-family', 'label': 'Xray/V2Ray', 'aliases': ['xray', 'v2ray'], 'systemd': ['xray', 'v2ray'], 'process': ['xray', 'v2ray'], 'docker': ['xray', 'v2ray'], 'binary': ['xray', 'v2ray'], 'config': ['/etc/xray', '/usr/local/etc/xray', '/etc/v2ray']},
+    {'key': 'sing-box', 'label': 'sing-box', 'aliases': ['sing-box', 'singbox'], 'systemd': ['sing-box', 'singbox'], 'process': ['sing-box', 'singbox'], 'docker': ['sing-box', 'singbox'], 'binary': ['sing-box', 'singbox'], 'config': ['/etc/sing-box', '/usr/local/etc/sing-box']},
+    {'key': 'hysteria', 'label': 'Hysteria', 'aliases': ['hysteria', 'hysteria2'], 'systemd': ['hysteria-server', 'hysteria', 'hysteria2'], 'process': ['hysteria', 'hysteria2'], 'docker': ['hysteria', 'hysteria2'], 'binary': ['hysteria', 'hysteria2'], 'config': ['/etc/hysteria', '/etc/hysteria2']},
+    {'key': 'trojan', 'label': 'Trojan', 'aliases': ['trojan', 'trojan-go'], 'systemd': ['trojan', 'trojan-go'], 'process': ['trojan', 'trojan-go'], 'docker': ['trojan', 'trojan-go'], 'binary': ['trojan', 'trojan-go']},
+    {'key': 'shadowsocks', 'label': 'Shadowsocks', 'aliases': ['shadowsocks', 'ssserver', 'shadowsocks-libev', 'shadowsocks-rust'], 'systemd': ['shadowsocks-libev', 'shadowsocks-rust', 'ssserver'], 'process': ['ssserver', 'ss-local'], 'docker': ['shadowsocks', 'ssserver'], 'binary': ['ssserver', 'ss-local'], 'config': ['/etc/shadowsocks-libev', '/etc/shadowsocks-rust']},
+    {'key': 'gost', 'label': 'Gost', 'aliases': ['gost'], 'systemd': ['gost'], 'process': ['gost'], 'docker': ['gost'], 'binary': ['gost']},
+    {'key': 'mtproto', 'label': 'MTProto/TeleMT', 'aliases': ['telemt', 'mtg', 'mtproto-proxy', 'mtproxy', 'mtproto'], 'systemd': ['telemt', 'mtg', 'mtproto-proxy', 'mtproxy'], 'process': ['telemt', 'mtg', 'mtproto-proxy', 'mtproxy'], 'docker': ['telemt', 'mtg', 'mtproxy'], 'binary': ['telemt', 'mtg', 'mtproto-proxy', 'mtproxy'], 'config': ['/etc/telemt', '/etc/mtg', '/etc/mtproxy', '/opt/telemt']},
 ]
 
 
@@ -153,59 +110,48 @@ def _humanize_service_name(raw: str) -> str:
     return ' '.join(part.capitalize() if part else '' for part in cleaned.split()) or raw
 
 
-def _normalize_service_query(raw: str) -> str:
-    value = str(raw or '').strip().lower()
-    return value[:-8] if value.endswith('.service') else value
+def _manual_service_definitions() -> List[Dict[str, str]]:
+    payload = get_json_setting('manual_services_json', [])
+    if not isinstance(payload, list):
+        return []
+    result: List[Dict[str, str]] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        service_type = str(item.get('type') or '').strip().lower()
+        name = str(item.get('name') or '').strip()
+        if service_type not in {'systemd', 'process', 'docker'} or not name:
+            continue
+        label = str(item.get('label') or '').strip() or _humanize_service_name(name)
+        result.append({'type': service_type, 'name': name, 'label': label})
+    return result[:20]
 
 
-def _normalize_status(status: str) -> str:
-    raw = str(status or '').strip().lower()
-    if raw in {'active', 'running', 'online', 'up'}:
+def _normalize(value: str) -> str:
+    return re.sub(r'[^a-z0-9]+', '', value.lower())
+
+
+def _norm_contains(needle: str, haystack: str) -> bool:
+    n = _normalize(needle)
+    h = _normalize(haystack)
+    return bool(n and h and n in h)
+
+
+def _looks_running(status: str) -> bool:
+    lower = str(status).lower()
+    return lower in {'active', 'running'} or 'running' in lower or 'up ' in lower or lower.startswith('up')
+
+
+def _status_text(running: bool, installed: bool) -> str:
+    if running:
         return 'running'
-    if raw in {'inactive', 'dead', 'exited', 'stopped', 'created'}:
-        return 'stopped'
-    if raw in {'failed', 'crashed', 'error', 'missing', 'not-found', 'unknown'}:
-        return 'missing'
-    if raw in {'activating', 'reloading', 'deactivating'}:
-        return 'stopped'
-    return raw or 'unknown'
-
-
-def _status_label(status: str) -> str:
-    normalized = _normalize_status(status)
-    if normalized == 'running':
-        return 'running'
-    if normalized == 'stopped':
+    if installed:
         return 'stopped'
     return 'not found'
 
 
-def _manual_service_definitions() -> List[Dict[str, str]]:
-    raw = str(get_setting('manual_services_json', '[]') or '[]')
-    try:
-        payload = json.loads(raw)
-        if not isinstance(payload, list):
-            return []
-        result: List[Dict[str, str]] = []
-        for item in payload:
-            if not isinstance(item, dict):
-                continue
-            service_type = str(item.get('type') or '').strip().lower()
-            name = str(item.get('name') or '').strip()
-            if service_type not in {'systemd', 'process', 'docker'} or not name:
-                continue
-            label = str(item.get('label') or '').strip() or _humanize_service_name(name)
-            result.append({'type': service_type, 'name': name, 'label': label})
-        return result[:20]
-    except Exception:
-        logger.warning('Cannot parse manual_services_json')
-        return []
-
-
 async def _disk_models() -> List[str]:
-    _, out, _ = await safe_run_command(
-        ['lsblk', '-d', '-J', '-o', 'NAME,MODEL,SIZE,TYPE'], timeout=10
-    )
+    _, out, _ = await safe_run_command(['lsblk', '-d', '-J', '-o', 'NAME,MODEL,SIZE,TYPE'], timeout=10)
     devices: List[str] = []
     if out:
         try:
@@ -232,7 +178,6 @@ async def _nic_models() -> List[str]:
                 found.append(line.split(': ', 1)[1].strip() if ': ' in line else line.strip())
     if found:
         return found[:6]
-
     fallback: List[str] = []
     stats = psutil.net_if_stats()
     for name, info in stats.items():
@@ -244,39 +189,37 @@ async def _nic_models() -> List[str]:
 
 
 async def _list_systemd_units() -> Dict[str, str]:
+    code, out, err = await safe_run_command(['systemctl', 'list-units', '--type=service', '--all', '--no-legend', '--no-pager'], timeout=12)
+    raw = out or err
+    if code != 0 and not raw.strip():
+        return {}
     result: Dict[str, str] = {}
+    for line in raw.splitlines():
+        chunks = line.split()
+        if len(chunks) < 4:
+            continue
+        unit, _, active, sub = chunks[:4]
+        norm = unit.replace('.service', '').strip().lower()
+        if not norm:
+            continue
+        result[norm] = sub if active == 'active' else active
+    return result
 
-    code, out, err = await safe_run_command(
-        ['systemctl', 'list-units', '--type=service', '--all', '--no-legend', '--no-pager'],
-        timeout=12,
-    )
-    raw = out or err
-    if code == 0 or raw.strip():
-        for line in raw.splitlines():
-            chunks = line.split()
-            if len(chunks) < 4:
-                continue
-            unit, _, active, sub = chunks[:4]
-            norm = _normalize_service_query(unit)
-            status = sub if active == 'active' else active
-            result[norm] = _normalize_status(status)
 
-    code, out, err = await safe_run_command(
-        ['systemctl', 'list-unit-files', '--type=service', '--no-legend', '--no-pager'],
-        timeout=12,
-    )
+async def _list_systemd_unit_files() -> Dict[str, str]:
+    code, out, err = await safe_run_command(['systemctl', 'list-unit-files', '--type=service', '--no-legend', '--no-pager'], timeout=12)
     raw = out or err
-    if code == 0 or raw.strip():
-        for line in raw.splitlines():
-            chunks = line.split()
-            if len(chunks) < 2:
-                continue
-            unit, state = chunks[:2]
-            norm = _normalize_service_query(unit)
-            if norm not in result:
-                result[norm] = 'stopped'
-            elif result[norm] == 'missing' and state.lower() not in {'masked', 'bad'}:
-                result[norm] = 'stopped'
+    if code != 0 and not raw.strip():
+        return {}
+    result: Dict[str, str] = {}
+    for line in raw.splitlines():
+        chunks = line.split()
+        if len(chunks) < 2:
+            continue
+        unit, state = chunks[:2]
+        norm = unit.replace('.service', '').strip().lower()
+        if norm:
+            result[norm] = state
     return result
 
 
@@ -294,17 +237,13 @@ def _list_processes() -> List[Tuple[str, str]]:
 
 
 async def _list_docker_containers() -> Tuple[Dict[str, str], bool]:
-    code, out, err = await safe_run_command(
-        ['docker', 'ps', '-a', '--format', '{{.Names}}	{{.Status}}'],
-        timeout=8,
-    )
+    code, out, err = await safe_run_command(['docker', 'ps', '-a', '--format', '{{.Names}}	{{.Status}}'], timeout=8)
     permission_needed = False
     error_text = (err or out or '').lower()
     if code != 0:
         if any(fragment in error_text for fragment in DOCKER_PERMISSION_ERRORS):
             permission_needed = True
         return {}, permission_needed
-
     result: Dict[str, str] = {}
     for line in (out or '').splitlines():
         if not line.strip():
@@ -312,197 +251,122 @@ async def _list_docker_containers() -> Tuple[Dict[str, str], bool]:
         if '	' in line:
             name, status = line.split('	', 1)
         else:
-            name, status = line.strip(), 'unknown'
-        normalized = 'running' if any(x in status.lower() for x in ('up', 'running', 'healthy')) else 'stopped'
-        result[name.strip().lower()] = normalized
+            name, status = line.strip(), 'running'
+        result[name.strip().lower()] = status.strip() or 'running'
     return result, permission_needed
 
 
+def _find_process_match(aliases: Sequence[str], processes: List[Tuple[str, str]]) -> Tuple[bool, str]:
+    for alias in aliases:
+        for proc_name, cmdline in processes:
+            if _norm_contains(alias, proc_name) or _norm_contains(alias, cmdline):
+                return True, proc_name or alias
+    return False, ''
 
 
-def _query_matches_service_name(query: str, candidate: str) -> bool:
-    q = _normalize_service_query(query)
-    cand = _normalize_service_query(candidate)
-    if not q or not cand:
-        return False
-    if q == cand:
-        return True
-    if len(q) < 3:
-        return False
-    parts = re.split(r'[^a-z0-9@._+-]+', cand)
-    return q in parts or cand.startswith(q + '@')
+def _find_docker_match(aliases: Sequence[str], containers: Dict[str, str]) -> Tuple[bool, bool, str]:
+    for alias in aliases:
+        for name, status in containers.items():
+            if _norm_contains(alias, name):
+                return _looks_running(status), True, name
+    return False, False, ''
 
 
-def _extract_process_aliases(proc_name: str, cmdline: str) -> set[str]:
-    aliases: set[str] = set()
-    primary = (proc_name or '').strip().lower()
-    if primary:
-        aliases.add(primary.rsplit('/', 1)[-1])
-
-    tokens = [token.strip().lower() for token in cmdline.split() if token.strip()]
-    for raw in tokens[:3]:
-        base = raw.rsplit('/', 1)[-1]
-        if not base or base.startswith('-'):
-            continue
-        if '.' in base and not base.endswith('.py') and '.service' not in base:
-            continue
-        aliases.add(base)
-        if base.endswith('.py'):
-            aliases.add(base[:-3])
-
-    return {item for item in aliases if item}
+def _find_systemd_match(exacts: Sequence[str], prefixes: Sequence[str], units: Dict[str, str], unit_files: Dict[str, str]) -> Tuple[bool, bool, str]:
+    for name in exacts:
+        key = name.lower().replace('.service', '')
+        if key in units:
+            return _looks_running(units[key]), True, key
+        if key in unit_files:
+            return False, True, key
+    for prefix in prefixes:
+        low = prefix.lower()
+        for key, status in units.items():
+            if key.startswith(low):
+                return _looks_running(status), True, key
+        for key in unit_files:
+            if key.startswith(low):
+                return False, True, key
+    return False, False, ''
 
 
-def _query_matches_process(query: str, proc_name: str, cmdline: str) -> bool:
-    q = _normalize_service_query(query)
-    if not q:
-        return False
-    aliases = _extract_process_aliases(proc_name, cmdline)
-    if q in aliases:
-        return True
-    if len(q) >= 3:
-        for alias in aliases:
-            if alias.startswith(q) or q.startswith(alias):
-                return True
+def _files_indicate_installation(entry: Dict[str, Any]) -> bool:
+    for binary in entry.get('binary', []):
+        if shutil.which(binary):
+            return True
+    for path in entry.get('config', []):
+        if Path(path).exists():
+            return True
     return False
 
 
-def _status_from_docker_runtime(raw_status: str) -> str:
-    lowered = (raw_status or '').lower()
-    if any(token in lowered for token in ('up', 'running', 'healthy')):
-        return 'running'
-    if any(token in lowered for token in ('exited', 'created', 'paused', 'dead')):
-        return 'stopped'
-    return 'missing'
-
-
-def _scan_known_service_paths() -> tuple[list[str], list[str]]:
-    found: list[str] = []
-    permission_notes: list[str] = []
-    for item in KNOWN_SERVICE_ARTEFACTS:
-        label = str(item.get('label') or '').strip()
-        if not label:
-            continue
-        for raw_path in item.get('paths', []):
-            path = Path(raw_path)
-            try:
-                if path.exists():
-                    found.append(label)
-                    break
-            except PermissionError:
-                permission_notes.append(str(path))
-            except Exception:
-                continue
-    return found, permission_notes[:6]
-
-def _status_from_catalog(
-    entry: Dict[str, Any],
-    systemd_units: Dict[str, str],
-    processes: List[Tuple[str, str]],
-    docker_containers: Dict[str, str],
-) -> Tuple[str, str]:
-    for unit in entry.get('systemd', []):
-        status = systemd_units.get(_normalize_service_query(unit))
-        if status:
-            return entry['label'], status
-    for prefix in entry.get('systemd_prefix', []):
-        normalized_prefix = _normalize_service_query(prefix)
-        for unit_name, status in sorted(systemd_units.items()):
-            if unit_name.startswith(normalized_prefix):
-                suffix = unit_name[len(normalized_prefix):].strip('@-._')
-                label = entry['label'] if not suffix else f"{entry['label']} {suffix}"
-                return label, status
-    for keyword in entry.get('process', []):
-        lower_keyword = str(keyword).lower()
-        for proc_name, cmdline in processes:
-            if lower_keyword and (lower_keyword == proc_name or lower_keyword in cmdline):
-                return entry['label'], 'running'
-    for docker_name in entry.get('docker', []):
-        lower_name = str(docker_name).lower()
-        for container, status in docker_containers.items():
-            if lower_name == container or lower_name in container:
-                return entry['label'], status
+def _status_from_catalog(entry: Dict[str, Any], systemd_units: Dict[str, str], unit_files: Dict[str, str], processes: List[Tuple[str, str]], docker_containers: Dict[str, str]) -> Tuple[str, str]:
+    aliases = list(entry.get('aliases', []))
+    exacts = list(entry.get('systemd', []))
+    prefixes = list(entry.get('systemd_prefix', []))
+    running, installed, _ = _find_systemd_match(exacts, prefixes, systemd_units, unit_files)
+    if running:
+        return entry['label'], 'running'
+    docker_running, docker_installed, _ = _find_docker_match(list(entry.get('docker', aliases)), docker_containers)
+    if docker_running:
+        return entry['label'], 'running'
+    proc_running, _ = _find_process_match(list(entry.get('process', aliases)), processes)
+    if proc_running:
+        return entry['label'], 'running'
+    installed = installed or docker_installed or _files_indicate_installation(entry)
     if entry.get('docker_builtin') and docker_containers:
         return entry['label'], 'running'
-    return '', ''
+    status = _status_text(False, installed)
+    return entry['label'], status if installed else ''
 
 
-def _status_for_manual_service(
-    item: Dict[str, str],
-    systemd_units: Dict[str, str],
-    processes: List[Tuple[str, str]],
-    docker_containers: Dict[str, str],
-) -> str:
+def _status_for_manual_service(item: Dict[str, str], systemd_units: Dict[str, str], unit_files: Dict[str, str], processes: List[Tuple[str, str]], docker_containers: Dict[str, str]) -> str:
     service_type = item['type']
-    name = _normalize_service_query(item['name'])
+    name = item['name'].strip().lower()
     if service_type == 'systemd':
-        return systemd_units.get(name, 'missing')
+        running, installed, _ = _find_systemd_match([name], [name], systemd_units, unit_files)
+        return _status_text(running, installed)
     if service_type == 'process':
-        for proc_name, cmdline in processes:
-            if _query_matches_process(name, proc_name, cmdline):
-                return 'running'
-        return 'missing'
+        running, _ = _find_process_match([name], processes)
+        return 'running' if running else 'not found'
     if service_type == 'docker':
-        for container, status in docker_containers.items():
-            if _query_matches_service_name(name, container):
-                return status
-        return 'missing'
-    return 'unknown'
+        running, installed, _ = _find_docker_match([name], docker_containers)
+        return _status_text(running, installed)
+    return 'not found'
 
 
-async def resolve_manual_service_query(
-    service_type: str,
-    query: str,
-    *,
-    include_docker: bool = True,
-) -> Dict[str, str] | None:
-    service_type = str(service_type or '').strip().lower()
-    q = _normalize_service_query(query)
-    if service_type not in {'systemd', 'process', 'docker'} or not q:
-        return None
-
-    systemd_units = await _list_systemd_units() if service_type == 'systemd' else {}
-    processes = _list_processes() if service_type == 'process' else []
-    docker_containers, _ = await _list_docker_containers() if include_docker and service_type == 'docker' else ({}, False)
+def find_manual_service_candidate(service_type: str, user_input: str, bot_data: Dict[str, Any] | None = None) -> Tuple[bool, Dict[str, str], str]:
+    name = (user_input or '').strip()
+    if not name:
+        return False, {}, 'Пустое имя сервиса.'
+    service_type = service_type.lower().strip()
+    systemd_units = (bot_data or {}).get('_last_systemd_units') or {}
+    unit_files = (bot_data or {}).get('_last_systemd_unit_files') or {}
+    processes = (bot_data or {}).get('_last_processes') or _list_processes()
+    docker_containers = (bot_data or {}).get('_last_docker_containers') or {}
 
     if service_type == 'systemd':
-        if q in systemd_units:
-            return {'type': 'systemd', 'name': q, 'label': _humanize_service_name(q), 'status': systemd_units[q]}
-        matches = [(name, status) for name, status in systemd_units.items() if _query_matches_service_name(q, name)]
-        if not matches:
-            return None
-        matches = sorted(matches, key=lambda item: (item[0] != q, len(item[0])))
-        name, status = matches[0]
-        return {'type': 'systemd', 'name': name, 'label': _humanize_service_name(name), 'status': status}
+        running, installed, matched = _find_systemd_match([name], [name], systemd_units, unit_files)
+        if not installed and not running:
+            return False, {}, f'Сервис <b>{name}</b> не найден среди systemd unit.'
+        matched_name = matched or name
+        return True, {'type': 'systemd', 'name': matched_name, 'label': _humanize_service_name(matched_name)}, 'ok'
 
     if service_type == 'process':
-        ranked: list[tuple[int, str]] = []
-        for proc_name, cmdline in processes:
-            if not _query_matches_process(q, proc_name, cmdline):
-                continue
-            aliases = _extract_process_aliases(proc_name, cmdline)
-            canonical = (proc_name or '').strip().lower() or q
-            canonical = canonical.rsplit('/', 1)[-1]
-            score = 0
-            if q == canonical:
-                score = 0
-            elif q in aliases:
-                score = 1
-            else:
-                score = 2
-            ranked.append((score, canonical))
-        if not ranked:
-            return None
-        _, name = sorted(set(ranked), key=lambda item: (item[0], len(item[1]), item[1]))[0]
-        return {'type': 'process', 'name': name, 'label': _humanize_service_name(name), 'status': 'running'}
+        running, matched = _find_process_match([name], processes)
+        if not running:
+            return False, {}, f'Процесс <b>{name}</b> не найден среди запущенных процессов.'
+        actual = matched or name
+        return True, {'type': 'process', 'name': actual, 'label': _humanize_service_name(actual)}, 'ok'
 
     if service_type == 'docker':
-        matches = [(name, status) for name, status in docker_containers.items() if _query_matches_service_name(q, name)]
-        if not matches:
-            return None
-        name, status = sorted(matches, key=lambda item: (item[0] != q, len(item[0])))[0]
-        return {'type': 'docker', 'name': name, 'label': _humanize_service_name(name), 'status': status}
-    return None
+        running, installed, matched = _find_docker_match([name], docker_containers)
+        if not installed and not running:
+            return False, {}, f'Docker-контейнер <b>{name}</b> не найден.'
+        actual = matched or name
+        return True, {'type': 'docker', 'name': actual, 'label': _humanize_service_name(actual)}, 'ok'
+
+    return False, {}, 'Неподдерживаемый тип сервиса.'
 
 
 async def get_service_statuses(bot_data: Dict[str, Any], force: bool = False) -> Dict[str, str]:
@@ -511,14 +375,19 @@ async def get_service_statuses(bot_data: Dict[str, Any], force: bool = False) ->
         return cached['data']
 
     systemd_units = await _list_systemd_units()
+    unit_files = await _list_systemd_unit_files()
     processes = _list_processes()
     docker_containers, docker_permission_needed = await _list_docker_containers()
-    artefact_labels, permission_paths = _scan_known_service_paths()
+
+    bot_data['_last_systemd_units'] = systemd_units
+    bot_data['_last_systemd_unit_files'] = unit_files
+    bot_data['_last_processes'] = processes
+    bot_data['_last_docker_containers'] = docker_containers
 
     result: Dict[str, str] = {}
     auto_labels: List[str] = []
     for entry in SERVICE_CATALOG:
-        label, status = _status_from_catalog(entry, systemd_units, processes, docker_containers)
+        label, status = _status_from_catalog(entry, systemd_units, unit_files, processes, docker_containers)
         if not label or not status:
             continue
         if label in result:
@@ -526,15 +395,10 @@ async def get_service_statuses(bot_data: Dict[str, Any], force: bool = False) ->
         result[label] = status
         auto_labels.append(label)
 
-    for label in artefact_labels:
-        if label not in result:
-            result[label] = 'stopped'
-            auto_labels.append(label)
-
     manual_labels: List[str] = []
     for item in _manual_service_definitions():
         label = item['label']
-        status = _status_for_manual_service(item, systemd_units, processes, docker_containers)
+        status = _status_for_manual_service(item, systemd_units, unit_files, processes, docker_containers)
         result[label] = status
         manual_labels.append(label)
 
@@ -544,8 +408,7 @@ async def get_service_statuses(bot_data: Dict[str, Any], force: bool = False) ->
         'auto': auto_labels,
         'manual': manual_labels,
         'docker_permission_needed': docker_permission_needed,
-        'permission_paths': permission_paths,
-        'scanned_locations': ['/etc/systemd/system', '/lib/systemd/system', '/usr/lib/systemd/system', '/usr/local/bin', '/usr/bin', '/opt', '/etc', '/var/lib', '/srv'],
+        'scan_sources': ['systemd', 'processes', 'docker', ', '.join(SCAN_DIRECTORIES)],
     }
     return result
 
@@ -558,8 +421,7 @@ async def get_service_scan_snapshot(bot_data: Dict[str, Any], force: bool = Fals
         'auto': list(cached.get('auto') or []),
         'manual': list(cached.get('manual') or []),
         'docker_permission_needed': bool(cached.get('docker_permission_needed')),
-        'permission_paths': list(cached.get('permission_paths') or []),
-        'scanned_locations': list(cached.get('scanned_locations') or []),
+        'scan_sources': list(cached.get('scan_sources') or []),
     }
 
 

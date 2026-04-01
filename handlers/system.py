@@ -24,8 +24,8 @@ from ui.keyboards import back_button, confirm_keyboard
 REBOOT_MARKER = Path(config.PROJECT_DIR) / '.pending_reboot.json'
 
 
-def _root_helper(action: str):
-    return ['sudo', config.ROOT_HELPER, action]
+def _root_helper(*args: str):
+    return ['sudo', config.ROOT_HELPER, *args]
 
 
 def _write_reboot_marker(admin_id: str, first_name: str) -> None:
@@ -161,7 +161,9 @@ async def _perform_bot_update(query, context: ContextTypes.DEFAULT_TYPE) -> None
 
     ok, details = await update_bot_code(progress)
     if ok:
-        code, out, err = await safe_run_command(_root_helper('restart-bot'), timeout=60)
+        code, out, err = await safe_run_command(_root_helper('restart', 'server-bot.service'), timeout=60)
+        if code != 0:
+            code, out, err = await safe_run_command(_root_helper('restart-bot'), timeout=60)
         if code == 0:
             await query.message.edit_text(
                 '✅ Бот обновлён и сервис перезапущен.\n\n'

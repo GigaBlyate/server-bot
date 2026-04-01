@@ -17,17 +17,17 @@ from core.db import (
 )
 from core.formatting import compact_bar, days_left_text, escape_html, format_size
 from services.certificates import get_expiring_certificates
-from services.system_info import get_service_statuses, get_system_update_cache, _normalize_status, _status_label
+from services.system_info import get_service_statuses, get_system_update_cache
 from services.traffic_quota import get_dashboard_traffic_lines, get_quota_status
 from services.vps_service import build_vps_summary
 from services.updater import get_current_version
 
 
 def _service_icon(status: str) -> str:
-    normalized = _normalize_status(status)
-    if normalized == 'running':
+    status = str(status).lower()
+    if status == 'running':
         return '🟢'
-    if normalized == 'stopped':
+    if status == 'stopped':
         return '🟡'
     return '🔴'
 
@@ -67,7 +67,7 @@ async def build_dashboard_text(
     geo = snapshot['public_geo']
     service_lines = []
     for name, status in snapshot['services'].items():
-        service_lines.append(f'{_service_icon(status)} {escape_html(name)}: {escape_html(_status_label(status))}')
+        service_lines.append(f'{_service_icon(status)} {escape_html(name)}: {escape_html(status)}')
 
     due_vps = build_vps_summary(30)
     certs = await get_expiring_certificates(bot_data, 30)
@@ -112,7 +112,7 @@ async def build_dashboard_text(
         text.extend(['', '<b>Сертификаты до 30 дней</b>', *cert_lines])
 
     if service_lines:
-        text.extend(['', '<b>Ключевые сервисы</b>', *service_lines[:15]])
+        text.extend(['', '<b>Ключевые сервисы</b>', *service_lines[:12]])
 
     text.extend(['', 'Нажми кнопку ниже для действия или обнови данные.'])
     return '\n'.join(text)
