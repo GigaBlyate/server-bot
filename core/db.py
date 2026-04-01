@@ -34,15 +34,23 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     'traffic_quota_gb': '3072',
     'traffic_cycle_days': '30',
     'traffic_cycle_start_date': '',
+    'traffic_activation_date': '',
+    'traffic_overage_price_rub_per_tb': '200',
+    'traffic_period_anchor_total_bytes': '',
+    'traffic_period_sync_used_bytes': '',
+    'traffic_period_sync_total_bytes': '',
+    'traffic_period_sync_set_at': '',
+    'traffic_monotonic_total_bytes': '',
+    'traffic_last_raw_total_bytes': '',
+    'traffic_last_total_updated_at': '',
+    'traffic_today_anchor_date': '',
+    'traffic_today_anchor_total_bytes': '',
+    'traffic_yesterday_total_bytes': '0',
     'traffic_alert_sent_1tb': 'false',
     'traffic_alert_sent_300gb': 'false',
     'traffic_baseline_sent': '0',
     'traffic_baseline_recv': '0',
     'traffic_baseline_timestamp': '',
-    'traffic_cycle_accumulated_bytes': '0',
-    'traffic_last_total_bytes': '0',
-    'traffic_lifetime_accumulated_bytes': '0',
-    'traffic_last_raw_total_bytes': '0',
     'last_backup_success': '',
     'last_backup_size_mb': '0',
     'dashboard_autorefresh': 'true',
@@ -188,6 +196,20 @@ def get_setting(key: str, default: Any = None) -> Any:
     if not rows:
         return default
     return rows[0]['value']
+
+
+def get_json_setting(key: str, default: Any = None) -> Any:
+    raw = get_setting(key, None)
+    if raw is None:
+        return default
+    try:
+        return json.loads(str(raw))
+    except Exception:
+        return default
+
+
+def set_json_setting(key: str, value: Any) -> None:
+    set_setting(key, json.dumps(value, ensure_ascii=False))
 
 
 def set_setting(key: str, value: Any) -> None:

@@ -254,7 +254,9 @@ def get_quota_status() -> Dict[str, Any]:
 
     used_gb = period_used_bytes / GB
     remaining_gb = max(0.0, quota_gb - used_gb)
+    overage_gb = max(0.0, used_gb - quota_gb)
     days_left = max(0, (end - _today()).days)
+    overage_price_rub_per_tb = _safe_float(get_setting('traffic_overage_price_rub_per_tb', '200'), 200.0)
 
     return {
         'mode': 'quota',
@@ -265,6 +267,8 @@ def get_quota_status() -> Dict[str, Any]:
         'cycle_start': start.isoformat(),
         'cycle_end': end.isoformat(),
         'days_left': days_left,
+        'overage_gb': overage_gb,
+        'overage_price_rub_per_tb': overage_price_rub_per_tb,
         'total_bytes': total_bytes,
         'yesterday_bytes': yesterday_bytes,
         'today_bytes': today_bytes,
@@ -291,12 +295,15 @@ def get_dashboard_traffic_lines() -> list[str]:
             f'• Вчера: {format_size(status["yesterday_bytes"])} • Сегодня: {format_size(status["today_bytes"])}',
             '• Статус: безлимитный',
         ]
-    return [
+    lines = [
         f'• Трафик: всего {format_size(status["total_bytes"])}',
         f'• Вчера: {format_size(status["yesterday_bytes"])} • Сегодня: {format_size(status["today_bytes"])}',
         f'• Период: {format_size(status["period_used_bytes"])} из {format_gb(status["quota_gb"])}',
         f'• Остаток пакета: {format_gb(status["remaining_gb"])} • До сброса: {status["days_left"]} дн.',
     ]
+    if float(status.get('overage_gb') or 0.0) > 0:
+        lines.append(f'• Перерасход: {format_gb(status["overage_gb"])}')
+    return lines
 
 
 async def traffic_quota_job(context: ContextTypes.DEFAULT_TYPE) -> None:
