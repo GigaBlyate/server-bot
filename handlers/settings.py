@@ -10,15 +10,15 @@ from telegram.ext import ContextTypes
 from core.db import get_all_settings, get_setting, set_setting
 from core.scheduler import schedule_daily_report_job
 from security import safe_run_command, validate_google_drive_id
-from services.system_info import get_service_scan_snapshot, resolve_manual_service_query
-from services.traffic_quota import get_quota_summary_text
+from services.system_info import get_service_scan_snapshot
+from core.formatting import format_size
+from services.traffic_quota import get_quota_status, get_quota_summary_text
 from ui.keyboards import (
-    back_button,
     confirm_keyboard,
-    prompt_back_keyboard,
     service_monitor_keyboard,
     settings_keyboard,
     traffic_keyboard,
+    traffic_post_input_keyboard,
 )
 
 
@@ -63,13 +63,28 @@ async def show_traffic_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     query = update.callback_query
     await query.answer()
     settings = get_all_settings()
-    text = (
-        '📦 <b>Лимит трафика</b>\n\n'
-        'Если тариф безлимитный — бот не будет слать предупреждения.\n'
-        'Если у вас пакет, настрой размер и длительность расчётного периода.'
-    )
+    quota = get_quota_status()
+    lines = [
+        '📦 <b>Лимит трафика</b>',
+        '',
+        'Все настройки пакета трафика находятся только здесь.',
+    ]
+    if settings.get('traffic_mode') == 'quota':
+        activation = settings.get('traffic_activation_date') or 'не задана'
+        lines.extend([
+            f'• Пакет: <b>{settings.get("traffic_quota_gb", "3072")} GB</b>',
+            f'• Активация услуги: <b>{activation}</b>',
+            f'• Перерасход: <b>{settings.get("traffic_overage_rub_per_tb", "200")} RUB/TB</b>',
+            f'• Уже учтено в периоде: <b>{format_size(int(settings.get("traffic_period_seed_bytes", "0") or 0))}</b>',
+        ])
+        if quota.get('period_end'):
+            lines.append(f'• Конец периода: <b>{quota["period_end"].isoformat()}</b>')
+        if quota.get('period_days_left') is not None:
+            lines.append(f'• До сброса: <b>{quota["period_days_left"]} дн.</b>')
+    else:
+        lines.append('• Режим: <b>безлимитный</b>')
     await query.edit_message_text(
-        text,
+        '\n'.join(lines),
         reply_markup=traffic_keyboard(settings),
         parse_mode='HTML',
     )
@@ -85,8 +100,8 @@ async def show_service_monitor_menu(update: Update, context: ContextTypes.DEFAUL
     manual_lines = [f'• {item.get("label") or item.get("name")}' for item in manual_items[:10]] or ['• Нет']
     text = (
         '🧩 <b>Ключевые сервисы</b>\n\n'
-        'Бот автоматически сканирует systemd-сервисы, процессы, Docker и популярные панели/VPN.\n'
-        'Ручное добавление работает только для реально найденных сервисов и процессов.\n\n'
+        'Бот автоматически сканирует systemd-сервисы, процессы и популярные панели/VPN.\n'
+        'Если чего-то не хватает, можно быстро добавить это вручную.\n\n'
         '<b>Автоматически найдено</b>\n'
         + '\n'.join(auto_lines)
         + '\n\n<b>Добавлено вручную</b>\n'
@@ -150,20 +165,44 @@ async def handle_settings_callback(update: Update, context: ContextTypes.DEFAULT
     if data == 'traffic_set_quota':
         await query.answer()
         context.user_data['awaiting'] = 'traffic_quota_gb'
-        await query.edit_message_text('Введите размер пакета трафика в GB. Например: 3072')
+        await query.edit_message_text(
+            'Введите размер пакета трафика в GB. Например: 3072',
+            reply_markup=traffic_post_input_keyboard(),
+        )
         return True
-    if data == 'traffic_set_cycle':
+    if data == 'traffic_set_activation':
         await query.answer()
-        context.user_data['awaiting'] = 'traffic_cycle_days'
-        await query.edit_message_text('Введите длительность расчётного периода в днях. Например: 30')
+        context.user_data['awaiting'] = 'traffic_activation_date'
+        await query.edit_message_text(
+            'Введите дату активации услуги в формате YYYY-MM-DD.\n\nПример: 2026-03-02',
+            reply_markup=traffic_post_input_keyboard(),
+        )
+        return True
+    if data == 'traffic_set_overage':
+        await query.answer()
+        context.user_data['awaiting'] = 'traffic_overage_rub_per_tb'
+        await query.edit_message_text(
+            'Введите стоимость перерасхода за 1 TB в RUB.\n\nПример: 200',
+            reply_markup=traffic_post_input_keyboard(),
+        )
+        return True
+    if data == 'traffic_sync_used':
+        await query.answer()
+        context.user_data['awaiting'] = 'traffic_sync_used_gb'
+        await query.edit_message_text(
+            'Введите, сколько трафика уже израсходовано в текущем периоде по данным хостера, в GB.\n\nПример: 512',
+            reply_markup=traffic_post_input_keyboard(),
+        )
         return True
     if data == 'traffic_reset_cycle':
-        await query.answer('Расчётный период сброшен')
-        set_setting('traffic_cycle_start_date', '')
-        set_setting('traffic_cycle_accumulated_bytes', '0')
-        set_setting('traffic_last_total_bytes', '0')
+        await query.answer('Текущий период пересчитан')
+        set_setting('traffic_billing_period_start', '')
+        set_setting('traffic_billing_period_end', '')
+        set_setting('traffic_period_anchor_total_bytes', get_setting('traffic_total_bytes', '0'))
+        set_setting('traffic_period_anchor_set_at', '')
         set_setting('traffic_alert_sent_1tb', 'false')
         set_setting('traffic_alert_sent_300gb', 'false')
+        set_setting('traffic_period_seed_bytes', '0')
         await show_traffic_menu(update, context)
         return True
     if data == 'service_monitor_menu':
@@ -176,16 +215,14 @@ async def handle_settings_callback(update: Update, context: ContextTypes.DEFAULT
         await query.answer()
         context.user_data['awaiting'] = 'manual_service_systemd'
         await query.edit_message_text(
-            'Введите имя systemd-сервиса.\n\nПримеры:\n• nginx\n• wg-quick@wg0\n• xray',
-            reply_markup=prompt_back_keyboard('service_monitor_menu'),
+            'Введите имя systemd-сервиса.\n\nПримеры:\n• nginx\n• wg-quick@wg0\n• xray'
         )
         return True
     if data == 'service_add_process':
         await query.answer()
         context.user_data['awaiting'] = 'manual_service_process'
         await query.edit_message_text(
-            'Введите имя процесса или ключевое слово процесса.\n\nПримеры:\n• mtg\n• sing-box\n• remnawave',
-            reply_markup=prompt_back_keyboard('service_monitor_menu'),
+            'Введите имя процесса или ключевое слово процесса.\n\nПримеры:\n• mtg\n• sing-box\n• remnawave'
         )
         return True
     if data == 'service_add_docker':
@@ -202,8 +239,7 @@ async def handle_settings_callback(update: Update, context: ContextTypes.DEFAULT
             return True
         context.user_data['awaiting'] = 'manual_service_docker'
         await query.edit_message_text(
-            'Введите имя Docker-контейнера или его часть.\n\nПримеры:\n• marzban\n• xray\n• remnawave',
-            reply_markup=prompt_back_keyboard('service_monitor_menu'),
+            'Введите имя Docker-контейнера или его часть.\n\nПримеры:\n• marzban\n• xray\n• remnawave'
         )
         return True
     if data == 'service_grant_docker':
@@ -277,23 +313,51 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             if value <= 0:
                 raise ValueError
         except ValueError:
-            await update.message.reply_text('❌ Введите целое число в GB, например 3072.')
+            await update.message.reply_text('❌ Введите целое число в GB, например 3072.', reply_markup=traffic_post_input_keyboard())
             return True
         set_setting('traffic_quota_gb', str(value))
         set_setting('traffic_mode', 'quota')
-        await update.message.reply_text('✅ Пакет трафика сохранён.')
+        await update.message.reply_text('✅ Пакет трафика сохранён.', reply_markup=traffic_post_input_keyboard())
         return True
 
-    if awaiting == 'traffic_cycle_days':
+    if awaiting == 'traffic_activation_date':
+        from datetime import date as _date
         try:
-            value = int(text)
-            if value <= 0 or value > 365:
+            _date.fromisoformat(text)
+        except Exception:
+            await update.message.reply_text('❌ Введите дату в формате YYYY-MM-DD.', reply_markup=traffic_post_input_keyboard())
+            return True
+        set_setting('traffic_activation_date', text)
+        set_setting('traffic_billing_period_start', '')
+        set_setting('traffic_billing_period_end', '')
+        set_setting('traffic_period_anchor_total_bytes', get_setting('traffic_total_bytes', '0'))
+        await update.message.reply_text('✅ Дата активации услуги сохранена.', reply_markup=traffic_post_input_keyboard())
+        return True
+
+    if awaiting == 'traffic_sync_used_gb':
+        try:
+            value = float(text.replace(',', '.'))
+            if value < 0:
                 raise ValueError
         except ValueError:
-            await update.message.reply_text('❌ Введите число от 1 до 365.')
+            await update.message.reply_text('❌ Введите число в GB, например 512.', reply_markup=traffic_post_input_keyboard())
             return True
-        set_setting('traffic_cycle_days', str(value))
-        await update.message.reply_text('✅ Длительность расчётного периода сохранена.')
+        bytes_value = int(value * 1024 ** 3)
+        set_setting('traffic_period_seed_bytes', str(bytes_value))
+        set_setting('traffic_period_anchor_total_bytes', get_setting('traffic_total_bytes', '0'))
+        await update.message.reply_text('✅ Использование текущего периода синхронизировано по данным хостера.', reply_markup=traffic_post_input_keyboard())
+        return True
+
+    if awaiting == 'traffic_overage_rub_per_tb':
+        try:
+            value = int(text)
+            if value < 0:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text('❌ Введите целое число, например 200.', reply_markup=traffic_post_input_keyboard())
+            return True
+        set_setting('traffic_overage_rub_per_tb', str(value))
+        await update.message.reply_text('✅ Стоимость перерасхода сохранена.', reply_markup=traffic_post_input_keyboard())
         return True
 
     if awaiting == 'google_drive_folder_id':
@@ -306,39 +370,16 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if awaiting in {'manual_service_systemd', 'manual_service_process', 'manual_service_docker'}:
         service_type = awaiting.replace('manual_service_', '')
-        resolved = await resolve_manual_service_query(service_type, text)
-        if not resolved:
-            await update.message.reply_text(
-                '❌ Такой сервис не найден. Проверьте имя и попробуйте ещё раз. '
-                'Бот добавляет только реально существующие systemd-сервисы, процессы или контейнеры.',
-                reply_markup=back_button('service_monitor_menu'),
-            )
-            return True
-
         items = _load_manual_services()
-        entry = {
-            'type': resolved['type'],
-            'name': resolved['name'],
-            'label': resolved['label'],
-        }
+        entry = {'type': service_type, 'name': text, 'label': _humanize(text)}
         for existing in items:
             if existing.get('type') == entry['type'] and existing.get('name') == entry['name']:
-                await update.message.reply_text(
-                    f'ℹ️ {entry["label"]} уже отслеживается.',
-                    reply_markup=back_button('service_monitor_menu'),
-                )
+                await update.message.reply_text('ℹ️ Такой сервис уже есть в ручном списке.')
                 return True
         items.append(entry)
         _save_manual_services(items)
-        context.application.bot_data.pop('service_statuses', None)
-        status_text = {
-            'running': 'running',
-            'stopped': 'stopped',
-            'missing': 'not found',
-        }.get(str(resolved.get('status') or '').strip().lower(), str(resolved.get('status') or 'unknown'))
         await update.message.reply_text(
-            f'✅ Добавлено в ключевые сервисы: {entry["label"]} — {status_text}.',
-            reply_markup=back_button('service_monitor_menu'),
+            f'✅ Добавлено в ключевые сервисы: {entry["label"]} ({service_type}).'
         )
         return True
 
