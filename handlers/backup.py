@@ -11,6 +11,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from backup_manager import BackupManager, UniversalScanner, create_selected_backup
+from security import validate_google_drive_id
 from core.db import (
     get_all_settings,
     get_saved_backup_selection,
@@ -269,11 +270,17 @@ async def handle_backup_callback(update: Update, context: ContextTypes.DEFAULT_T
         return True
     if data.startswith('backup_toggle_'):
         await query.answer()
-        _, _, sid, page = data.split('_')
+        payload = data[len('backup_toggle_'):]
+        try:
+            sid, page_raw = payload.rsplit('_', 1)
+            page = int(page_raw)
+        except Exception:
+            await query.answer('Некорректный идентификатор элемента', show_alert=True)
+            return True
         scanner: UniversalScanner = context.application.bot_data.get('smart_backup_scanner')
         if scanner:
             scanner.toggle_selection(sid)
-        await render_smart_backup_page(update, context, int(page))
+        await render_smart_backup_page(update, context, page)
         return True
     if data == 'backup_select_all':
         await query.answer('Выбраны все найденные элементы')
@@ -367,11 +374,24 @@ async def handle_backup_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     awaiting = context.user_data.get('awaiting')
-    if awaiting not in {'backup_interval', 'backup_keep_count'}:
+    if awaiting not in {'backup_interval', 'backup_keep_count', 'google_drive_folder_id'}:
         return False
 
     text = (update.message.text or '').strip()
     context.user_data.pop('awaiting', None)
+
+    if awaiting == 'google_drive_folder_id':
+        from core.db import set_setting
+
+        if not validate_google_drive_id(text):
+            await update.message.reply_text(
+                '❌ Похоже, это не ID папки Google Drive. Нужен фрагмент ссылки после /folders/.',
+            )
+            return True
+        set_setting('google_drive_folder_id', text)
+        await update.message.reply_text('✅ ID папки Google Drive сохранён.')
+        return True
+
     if not text.isdigit() or int(text) <= 0:
         await update.message.reply_text('❌ Нужны положительные целые числа.')
         return True
