@@ -140,6 +140,54 @@ async def handle_settings_callback(update: Update, context: ContextTypes.DEFAULT
         await show_traffic_menu(update, context)
         return True
 
+    if data == 'set_cpu_threshold':
+        context.user_data['awaiting_settings_input'] = 'cpu_threshold'
+        await query.answer()
+        await query.edit_message_text(
+            'Введите порог CPU в процентах. Пример: <code>85</code>.',
+            reply_markup=back_main_keyboard('settings_menu', 'menu'),
+            parse_mode='HTML',
+        )
+        return True
+
+    if data == 'set_ram_threshold':
+        context.user_data['awaiting_settings_input'] = 'ram_threshold'
+        await query.answer()
+        await query.edit_message_text(
+            'Введите порог RAM в процентах. Пример: <code>90</code>.',
+            reply_markup=back_main_keyboard('settings_menu', 'menu'),
+            parse_mode='HTML',
+        )
+        return True
+
+    if data == 'set_disk_threshold':
+        context.user_data['awaiting_settings_input'] = 'disk_threshold'
+        await query.answer()
+        await query.edit_message_text(
+            'Введите порог SSD в процентах. Пример: <code>90</code>.',
+            reply_markup=back_main_keyboard('settings_menu', 'menu'),
+            parse_mode='HTML',
+        )
+        return True
+
+    if data == 'toggle_daily_report':
+        current = str(get_setting('enable_daily_report', 'false')).lower() == 'true'
+        set_setting('enable_daily_report', 'false' if current else 'true')
+        schedule_daily_report_job(context.application)
+        await query.answer('Ежедневный отчёт выключен' if current else 'Ежедневный отчёт включён')
+        await show_settings(update, context)
+        return True
+
+    if data == 'set_report_time':
+        context.user_data['awaiting_settings_input'] = 'report_time'
+        await query.answer()
+        await query.edit_message_text(
+            'Введите время ежедневного отчёта в формате <code>HH:MM</code>. Пример: <code>09:00</code>.',
+            reply_markup=back_main_keyboard('settings_menu', 'menu'),
+            parse_mode='HTML',
+        )
+        return True
+
     if data == 'traffic_mode_unlimited':
         set_setting('traffic_mode', 'unlimited')
         await show_traffic_menu(update, context)
@@ -272,7 +320,29 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     text = (update.message.text or '').strip()
 
     try:
-        if awaiting == 'traffic_quota_gb':
+        if awaiting in ('cpu_threshold', 'ram_threshold', 'disk_threshold'):
+            value = float(text.replace(',', '.'))
+            if value <= 0 or value > 100:
+                raise ValueError
+            set_setting(awaiting, str(int(value) if value.is_integer() else value))
+            await update.message.reply_text(
+                '✅ Порог сохранён.',
+                reply_markup=back_main_keyboard('settings_menu', 'menu'),
+            )
+
+        elif awaiting == 'report_time':
+            hour, minute = [int(part) for part in text.split(':', 1)]
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                raise ValueError
+            normalized = f'{hour:02d}:{minute:02d}'
+            set_setting('report_time', normalized)
+            schedule_daily_report_job(context.application)
+            await update.message.reply_text(
+                f'✅ Время ежедневного отчёта сохранено: {normalized}',
+                reply_markup=back_main_keyboard('settings_menu', 'menu'),
+            )
+
+        elif awaiting == 'traffic_quota_gb':
             value = float(text.replace(',', '.'))
             if value <= 0:
                 raise ValueError
