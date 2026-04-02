@@ -208,6 +208,7 @@ def backup_keyboard(settings: Dict[str, str]) -> InlineKeyboardMarkup:
                 callback_data='backup_set_keep',
             )],
             [InlineKeyboardButton('Настройки Google Drive', callback_data='backup_gdrive_settings')],
+            [InlineKeyboardButton('Указать ID папки Google Drive', callback_data='backup_set_gdrive')],
             [InlineKeyboardButton('◀️ Назад', callback_data='menu')],
         ]
     )
