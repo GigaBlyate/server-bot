@@ -1,39 +1,38 @@
+<div align="center">
 
-# 🤖 Server Management Bot
+# G-PANEL
 
-Telegram бот для управления Linux сервером.
+**Telegram bot for personal Linux server management**  
+**Телеграм-бот для личного управления Linux-сервером**
 
-## 📋 Возможности
+<p>
+  <img src="https://img.shields.io/badge/version-3.1.14-blue" alt="Version">
+  <img src="https://img.shields.io/badge/python-3.x-blue" alt="Python">
+  <img src="https://img.shields.io/badge/platform-Debian%20%7C%20Ubuntu-6f42c1" alt="Platform">
+  <img src="https://img.shields.io/badge/systemd-required-success" alt="systemd">
+  <img src="https://img.shields.io/badge/telegram-bot-26A5E4" alt="Telegram Bot">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
+</p>
 
-| Функция | Описание |
-|---------|----------|
-| 📊 **Мониторинг сервера** | CPU, RAM, диск, аптайм, нагрузка |
-| 🔄 **Обновление системы** | Проверка и установка обновлений |
-| 🏓 **Ping диагностика** | Проверка доступности хостов с цветовой индикацией |
-| 🔐 **Генератор паролей** | Создание безопасных паролей с оценкой сложности |
-| 🔄 **Перезагрузка** | Удаленная перезагрузка сервера |
-| 📦 **Контроль VPS аренды** | Отслеживание сроков и напоминания об оплате |
-| ⚠️ **Мониторинг процессов** | Уведомления о высокой нагрузке CPU и RAM |
-| ℹ️ **Информация о сервере** | Детальные характеристики железа сервера |
-| 🤖 **Проверка обновлений** | Автоуведомления о новых версиях бота |
-| 📁 **Мониторинг директорий** | Слежение за размером папок и большими файлами |
-| 🐳 **Мониторинг Docker** | Отслеживание ресурсов контейнеров |
-| 🚫 **Fail2ban интеграция** | Уведомления о блокировках IP |
+Control server status, updates, backups, VPS subscriptions and key services from a private Telegram chat.  
+Контролируйте состояние сервера, обновления, бэкапы, VPS-аренды и ключевые сервисы прямо из личного чата Telegram.
 
-# 📚 Документация
-Подробные инструкции по установке, настройке и использованию доступны в Wiki:
+### Choose language / Выберите язык
 
-[Установка](https://github.com/GigaBlyate/server-bot/wiki/Installation) — как установить бота с нуля
+[<img src="https://img.shields.io/badge/🇷🇺-Русский-red?style=for-the-badge" alt="Русский">](./README.ru.md)
+[<img src="https://img.shields.io/badge/🇬🇧-English-blue?style=for-the-badge" alt="English">](./README.en.md)
+[<img src="https://img.shields.io/badge/Wiki-Open-181717?style=for-the-badge" alt="Wiki">](https://github.com/GigaBlyate/server-bot/wiki)
 
-[Настройка](https://github.com/GigaBlyate/server-bot/wiki/Configuration) — конфигурация и параметры
+</div>
 
-[Команды](https://github.com/GigaBlyate/server-bot/wiki/Commands) — все команды бота
+---
 
-[VPS менеджер](https://github.com/GigaBlyate/server-bot/wiki/VPS-Management) — управление арендой серверов
+## Quick install
 
-[Мониторинг процессов](https://github.com/GigaBlyate/server-bot/wiki/Process-Monitoring) — отслеживание нагрузки CPU
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/GigaBlyate/server-bot/main/install.sh)
+```
 
-[FAQ](https://github.com/GigaBlyate/server-bot/wiki/FAQ) — частые вопросы и решения
+> Recommended: Debian / Ubuntu with `systemd`.
 
-## ⭐ Поддержка
-Если бот полезен, поставьте звездочку на GitHub!
+For full documentation, setup details and advanced guides, use the project Wiki.
