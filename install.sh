@@ -481,6 +481,7 @@ case "$ACTION" in
     ;;
 esac
 ROOTHELPEOF
+  sudo sed -i "s|__SERVICE_USER__|$(id -un)|g" "$ROOT_HELPER_PATH"
   sudo chown root:root "$ROOT_HELPER_PATH"
   sudo chmod 755 "$ROOT_HELPER_PATH"
 }
@@ -585,7 +586,6 @@ MANAGEREOF
   sed -i "s|__INSTALL_DIR__|${INSTALL_DIR}|g" "$INSTALL_DIR/bot-manager.sh"
   sed -i "s|__TELEMETRY_URL__|${TELEMETRY_URL_FIXED}|g" "$INSTALL_DIR/bot-manager.sh"
   sed -i "s|__ROOT_HELPER__|${ROOT_HELPER_PATH}|g" "$INSTALL_DIR/bot-manager.sh"
-  sudo sed -i "s|__SERVICE_USER__|$(id -un)|g" "$ROOT_HELPER_PATH"
 
   chmod 755 "$INSTALL_DIR/bot-manager.sh"
   sudo install -m 755 "$INSTALL_DIR/bot-manager.sh" "$MANAGER_PATH"
