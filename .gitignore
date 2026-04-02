@@ -4,4 +4,11 @@ __pycache__/
 *.pyd
 venv/
 .env
+logs/
+backups/
+vps_data.db
 server-bot-clean/
+oauth-credentials.json
+token.pickle
+__pycache__/
+*.pyc
