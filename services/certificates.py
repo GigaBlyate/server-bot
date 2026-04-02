@@ -26,21 +26,31 @@ EXCLUDED_PATH_PARTS = {
 }
 COMMON_ROOTS = [
     '/etc/letsencrypt',
+    '/etc/letsencrypt/live',
+    '/etc/letsencrypt/archive',
     '/etc/nginx',
+    '/etc/apache2',
+    '/etc/haproxy',
     '/etc/prosody',
     '/etc/x-ui',
     '/usr/local/x-ui',
     '/usr/local/share',
+    '/usr/local/etc',
     '/etc/ssl/private',
+    '/etc/pki',
+    '/etc/pki/tls',
     '/var/lib',
+    '/var/snap',
     '/opt',
     '/srv',
+    '/root',
     '/home',
+    '/www/server/panel/vhost/cert',
 ]
-CERT_SUFFIXES = {'.pem', '.crt', '.cer', '.cert'}
+CERT_SUFFIXES = {'.pem', '.crt', '.cer', '.cert', '.fullchain'}
 KEYWORDS = (
     'fullchain', 'cert', 'certificate', 'panel', 'tls', 'ssl',
-    'letsencrypt', 'prosody', 'x-ui', 'chain',
+    'letsencrypt', 'prosody', 'x-ui', 'chain', 'acme', 'domain',
 )
 
 
