@@ -54,6 +54,26 @@ KEYWORDS = (
 )
 
 
+def _path_exists(path: Path) -> bool:
+    try:
+        return path.exists()
+    except (PermissionError, OSError) as exc:
+        logger.debug('Cannot stat path %s: %s', path, exc)
+        return False
+
+
+def _is_file(path: Path) -> bool:
+    try:
+        return path.is_file()
+    except (PermissionError, OSError) as exc:
+        logger.debug('Cannot access candidate %s: %s', path, exc)
+        return False
+
+
+def _walk_error(exc: OSError) -> None:
+    logger.debug('Skipping unreadable directory during certificate scan: %s', exc)
+
+
 def _parse_certificate(path: Path) -> Dict[str, Any] | None:
     try:
         raw = path.read_bytes()
@@ -103,6 +123,7 @@ def _parse_certificate(path: Path) -> Dict[str, Any] | None:
     }
 
 
+
 def _guess_service(path: str) -> str:
     lower = path.lower()
     if 'letsencrypt' in lower or 'nginx' in lower:
@@ -118,14 +139,23 @@ def _guess_service(path: str) -> str:
     return 'Custom service'
 
 
+
 def _walk_roots() -> List[Path]:
     found: List[Path] = []
     seen = set()
+
     for root in COMMON_ROOTS:
         root_path = Path(root)
-        if not root_path.exists():
+        if not _path_exists(root_path):
             continue
-        for current_root, dirs, files in os.walk(root_path, followlinks=False):
+
+        try:
+            walker = os.walk(root_path, followlinks=False, onerror=_walk_error)
+        except (PermissionError, OSError) as exc:
+            logger.debug('Cannot walk root %s: %s', root_path, exc)
+            continue
+
+        for current_root, dirs, files in walker:
             current_path = Path(current_root)
             try:
                 relative_depth = (
@@ -134,13 +164,16 @@ def _walk_roots() -> List[Path]:
                 )
             except Exception:
                 relative_depth = 0
+
             dirs[:] = [name for name in dirs if name not in EXCLUDED_DIRS]
             if relative_depth >= MAX_DEPTH:
                 dirs[:] = []
+
             current_str = str(current_path)
             if any(part in current_str for part in EXCLUDED_PATH_PARTS):
                 dirs[:] = []
                 continue
+
             for file_name in files:
                 candidate = current_path / file_name
                 lower = file_name.lower()
@@ -149,7 +182,7 @@ def _walk_roots() -> List[Path]:
                     or any(key in lower for key in KEYWORDS)
                 ):
                     continue
-                if candidate.is_file() and str(candidate) not in seen:
+                if _is_file(candidate) and str(candidate) not in seen:
                     seen.add(str(candidate))
                     found.append(candidate)
     return found
