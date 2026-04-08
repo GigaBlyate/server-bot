@@ -519,8 +519,8 @@ SERVICE_NAME="server-bot.service"
 
 lua_escape() {
   local src="${1:-}"
-  src="${src//\/\\}"
-  src="${src//"/\"}"
+  src="${src//\\/\\\\}"
+  src="${src//\"/\\\"}"
   printf '%s' "$src"
 }
 
@@ -540,14 +540,6 @@ case "$ACTION" in
   restart-bot)
     exec /usr/bin/systemctl restart "$SERVICE_NAME"
     ;;
-  grant-docker-access)
-    if ! getent group docker >/dev/null 2>&1; then
-      echo "docker group not found" >&2
-      exit 1
-    fi
-    /usr/sbin/usermod -aG docker "__SERVICE_USER__"
-    exec /usr/bin/systemctl restart "$SERVICE_NAME"
-    ;;
   prosody-restart)
     exec /usr/bin/systemctl restart prosody
     ;;
@@ -556,7 +548,7 @@ case "$ACTION" in
     exec /usr/bin/apt-get install --only-upgrade -y prosody
     ;;
   prosody-domains)
-    exec /bin/bash -lc 'shopt -s nullglob; grep -hRE "^[[:space:]]*VirtualHost[[:space:]]*"[^"]+"" /etc/prosody/prosody.cfg.lua /etc/prosody/conf.d/*.cfg.lua 2>/dev/null | sed -E "s/^[[:space:]]*VirtualHost[[:space:]]*"([^"]+)".*/\1/" | sort -u'
+    exec /bin/bash -lc 'shopt -s nullglob; awk '\''/^[[:space:]]*VirtualHost[[:space:]]*"/ { if (match($0, /"[^"]+"/)) { v=substr($0, RSTART+1, RLENGTH-2); print v } }'\'' /etc/prosody/prosody.cfg.lua /etc/prosody/conf.d/*.cfg.lua 2>/dev/null | sort -u'
     ;;
   prosody-list-users)
     host="${1:-}"
@@ -584,7 +576,15 @@ case "$ACTION" in
     [[ -n "$jid" && -n "$password" ]] || { echo "jid and password are required" >&2; exit 2; }
     jid="$(lua_escape "$jid")"
     password="$(lua_escape "$password")"
-    exec /usr/bin/prosodyctl shell "user:set_password(\"$jid\", \"$password\")"
+    exec /usr/bin/prosodyctl shell "user:password(\"$jid\", \"$password\")"
+    ;;
+  grant-docker-access)
+    if ! getent group docker >/dev/null 2>&1; then
+      echo "docker group not found" >&2
+      exit 1
+    fi
+    /usr/sbin/usermod -aG docker "__SERVICE_USER__"
+    exec /usr/bin/systemctl restart "$SERVICE_NAME"
     ;;
   reboot-host)
     if command -v reboot >/dev/null 2>&1; then
