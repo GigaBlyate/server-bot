@@ -11,6 +11,7 @@ from telegram.ext import ContextTypes
 from core.auth import is_admin
 from services.reports import build_dashboard_text
 from services.system_info import get_server_info
+from services.prosody_service import is_prosody_installed
 from ui.keyboards import menu_keyboard
 
 DASHBOARD_REFRESH_INTERVAL = 15
@@ -25,11 +26,12 @@ async def render_dashboard(
 ) -> Optional[Message]:
     snapshot = await get_server_info(context.application.bot_data)
     text = await build_dashboard_text(first_name, context.application.bot_data, snapshot)
+    show_prosody = is_prosody_installed()
     if target_message and edit:
         try:
             await target_message.edit_text(
                 text,
-                reply_markup=menu_keyboard(),
+                reply_markup=menu_keyboard(show_prosody=show_prosody),
                 parse_mode='HTML',
             )
         except BadRequest as exc:
@@ -39,7 +41,7 @@ async def render_dashboard(
     if target_message:
         return await target_message.reply_text(
             text,
-            reply_markup=menu_keyboard(),
+            reply_markup=menu_keyboard(show_prosody=show_prosody),
             parse_mode='HTML',
         )
     return None
@@ -52,10 +54,11 @@ async def send_dashboard_to_chat(
 ) -> Optional[Message]:
     snapshot = await get_server_info(context.application.bot_data)
     text = await build_dashboard_text(first_name, context.application.bot_data, snapshot)
+    show_prosody = is_prosody_installed()
     return await context.bot.send_message(
         chat_id=chat_id,
         text=text,
-        reply_markup=menu_keyboard(),
+        reply_markup=menu_keyboard(show_prosody=show_prosody),
         parse_mode='HTML',
     )
 
@@ -101,12 +104,13 @@ async def dashboard_refresh_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     snapshot = await get_server_info(context.application.bot_data)
     text = await build_dashboard_text(data['first_name'], context.application.bot_data, snapshot)
+    show_prosody = is_prosody_installed()
     try:
         await context.bot.edit_message_text(
             chat_id=data['chat_id'],
             message_id=data['message_id'],
             text=text,
-            reply_markup=menu_keyboard(),
+            reply_markup=menu_keyboard(show_prosody=show_prosody),
             parse_mode='HTML',
         )
     except BadRequest as exc:

@@ -9,28 +9,28 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 
 
-def menu_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
+def menu_keyboard(show_prosody: bool = False) -> InlineKeyboardMarkup:
+    rows = [
         [
-            [
-                InlineKeyboardButton('🔄 Обновить', callback_data='refresh_dashboard'),
-                InlineKeyboardButton('🏓 Ping', callback_data='ping_menu'),
-            ],
-            [
-                InlineKeyboardButton('📋 VPS', callback_data='vps_menu'),
-                InlineKeyboardButton('📦 Бэкап', callback_data='backup_menu'),
-            ],
-            [
-                InlineKeyboardButton('ℹ️ Информация', callback_data='info_menu'),
-                InlineKeyboardButton('💬 Prosody', callback_data='prosody_menu'),
-            ],
-            [
-                InlineKeyboardButton('⚙️ Настройки', callback_data='settings_menu'),
-                InlineKeyboardButton('🔐 Пароль', callback_data='pass_menu'),
-            ],
-            [InlineKeyboardButton('🔁 Перезагрузка', callback_data='reboot_confirm')],
-        ]
-    )
+            InlineKeyboardButton('🔄 Обновить', callback_data='refresh_dashboard'),
+            InlineKeyboardButton('🏓 Ping', callback_data='ping_menu'),
+        ],
+        [
+            InlineKeyboardButton('📋 VPS', callback_data='vps_menu'),
+            InlineKeyboardButton('📦 Бэкап', callback_data='backup_menu'),
+        ],
+        [
+            InlineKeyboardButton('ℹ️ Информация', callback_data='info_menu'),
+            InlineKeyboardButton('⚙️ Настройки', callback_data='settings_menu'),
+        ],
+        [
+            InlineKeyboardButton('🔐 Пароль', callback_data='pass_menu'),
+            InlineKeyboardButton('🔁 Перезагрузка', callback_data='reboot_confirm'),
+        ],
+    ]
+    if show_prosody:
+        rows.insert(2, [InlineKeyboardButton('💬 Prosody', callback_data='prosody_menu')])
+    return InlineKeyboardMarkup(rows)
 
 
 def back_button(target: str = 'menu') -> InlineKeyboardMarkup:

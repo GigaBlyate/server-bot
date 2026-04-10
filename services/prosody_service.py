@@ -2,7 +2,10 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import os
 import re
+import shutil
+import time
 from typing import List, Tuple
 
 import config
@@ -12,6 +15,28 @@ logger = logging.getLogger(__name__)
 
 _DOMAIN_RE = re.compile(r'^(?=.{1,253}$)(?!-)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?!-)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*$')
 _JID_RE = re.compile(r'^[A-Za-z0-9._%+=-]+@[A-Za-z0-9.-]+$')
+
+
+_PROSODY_DETECT_CACHE = {'value': None, 'expires': 0.0}
+
+
+def is_prosody_installed() -> bool:
+    now = time.time()
+    if _PROSODY_DETECT_CACHE['expires'] > now and _PROSODY_DETECT_CACHE['value'] is not None:
+        return bool(_PROSODY_DETECT_CACHE['value'])
+
+    present = any(
+        [
+            shutil.which('prosodyctl') is not None,
+            os.path.exists('/etc/prosody/prosody.cfg.lua'),
+            os.path.isdir('/etc/prosody/conf.d'),
+            os.path.exists('/lib/systemd/system/prosody.service'),
+            os.path.exists('/etc/systemd/system/prosody.service'),
+        ]
+    )
+    _PROSODY_DETECT_CACHE['value'] = bool(present)
+    _PROSODY_DETECT_CACHE['expires'] = now + 60
+    return bool(present)
 
 
 def _root_helper(*args: str) -> List[str]:
