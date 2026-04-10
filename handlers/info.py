@@ -6,8 +6,15 @@ from telegram.ext import ContextTypes
 
 from core.formatting import days_left_text, escape_html, format_size
 from services.certificates import get_certificates, get_expiring_certificates
-from services.system_info import get_server_info, get_top_processes
-from ui.keyboards import back_button, info_detail_keyboard, info_keyboard
+from services.system_info import get_process_detail, get_server_info, get_top_processes
+from ui.keyboards import (
+    back_button,
+    info_detail_keyboard,
+    info_keyboard,
+    process_detail_keyboard,
+    process_list_keyboard,
+    process_overview_keyboard,
+)
 
 
 async def show_info_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -31,9 +38,7 @@ async def show_server_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     docker_line = 'Docker недоступен'
     if info['docker_total'] is not None:
-        docker_line = (
-            f'{info["docker_running"]}/{info["docker_total"]} контейнеров запущено'
-        )
+        docker_line = f'{info["docker_running"]}/{info["docker_total"]} контейнеров запущено'
 
     board_line = ' / '.join(
         part for part in [info['product_vendor'], info['product_name']] if part != 'N/A'
@@ -120,49 +125,90 @@ async def show_certificates(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def show_top_processes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    snapshot = await get_top_processes(limit=7)
-
-    def _format_cpu(item: dict) -> str:
-        line = (
-            f'• <b>{item["cpu_percent"]:.1f}%</b> CPU · {escape_html(item["name"])} '
-            f'(PID <code>{item["pid"]}</code>) · RAM {escape_html(format_size(item["ram_bytes"]))}'
-        )
-        if item.get('cmdline'):
-            return line + f'\n  <code>{escape_html(item["cmdline"])}</code>'
-        return line
-
-    def _format_ram(item: dict) -> str:
-        line = (
-            f'• <b>{escape_html(format_size(item["ram_bytes"]))}</b> '
-            f'({item["ram_percent"]:.1f}% RAM) · {escape_html(item["name"])} '
-            f'(PID <code>{item["pid"]}</code>) · CPU {item["cpu_percent"]:.1f}%'
-        )
-        if item.get('cmdline'):
-            return line + f'\n  <code>{escape_html(item["cmdline"])}</code>'
-        return line
-
+    snapshot = await get_top_processes(limit=6)
     cpu_top = snapshot.get('cpu_top') or []
     ram_top = snapshot.get('ram_top') or []
-    lines = [
-        '🔥 <b>Нагрузка процессов</b>',
-        '',
-        f'Срез за <b>{snapshot.get("sample_interval", 0.35):.2f}</b> сек.',
-        '',
-        '<b>Топ по CPU</b>',
-    ]
+
+    cpu_line = '• Нет данных'
     if cpu_top:
-        lines.extend(_format_cpu(item) for item in cpu_top)
-    else:
-        lines.append('• Недостаточно данных для оценки.')
+        item = cpu_top[0]
+        cpu_line = f"• {escape_html(item['name'])} · PID <code>{item['pid']}</code> · {item['cpu_percent']:.1f}% CPU"
 
-    lines.extend(['', '<b>Топ по RAM</b>'])
+    ram_line = '• Нет данных'
     if ram_top:
-        lines.extend(_format_ram(item) for item in ram_top)
-    else:
-        lines.append('• Недостаточно данных для оценки.')
+        item = ram_top[0]
+        ram_line = f"• {escape_html(item['name'])} · PID <code>{item['pid']}</code> · {escape_html(format_size(item['ram_bytes']))}"
 
+    lines = [
+        '🔥 <b>CPU / RAM процессы</b>',
+        '',
+        '<b>Сейчас больше всего нагружают:</b>',
+        cpu_line,
+        ram_line,
+        '',
+        'Нажмите кнопку ниже, чтобы открыть подробный список и карточку конкретного процесса.',
+    ]
     await query.edit_message_text(
         '\n'.join(lines),
-        reply_markup=info_detail_keyboard(),
+        reply_markup=process_overview_keyboard(),
+        parse_mode='HTML',
+    )
+
+
+async def show_process_list(update: Update, context: ContextTypes.DEFAULT_TYPE, mode: str) -> None:
+    query = update.callback_query
+    await query.answer()
+    snapshot = await get_top_processes(limit=8)
+    items = snapshot.get('cpu_top' if mode == 'cpu' else 'ram_top') or []
+    lines = [f"🔥 <b>Топ процессов по {'CPU' if mode == 'cpu' else 'RAM'}</b>", '']
+    for item in items:
+        if mode == 'cpu':
+            lines.append(
+                f"• {escape_html(item['name'])} · PID <code>{item['pid']}</code> · {item['cpu_percent']:.1f}% CPU · {escape_html(format_size(item['ram_bytes']))} RAM"
+            )
+        else:
+            lines.append(
+                f"• {escape_html(item['name'])} · PID <code>{item['pid']}</code> · {escape_html(format_size(item['ram_bytes']))} RAM · {item['cpu_percent']:.1f}% CPU"
+            )
+    if not items:
+        lines.append('• Недостаточно данных для оценки.')
+    await query.edit_message_text(
+        '\n'.join(lines),
+        reply_markup=process_list_keyboard(items, mode),
+        parse_mode='HTML',
+    )
+
+
+async def show_process_detail(update: Update, context: ContextTypes.DEFAULT_TYPE, pid: int) -> None:
+    query = update.callback_query
+    await query.answer()
+    item = await get_process_detail(pid)
+    if not item:
+        await query.edit_message_text(
+            '❌ Процесс не найден или доступ к нему запрещён.',
+            reply_markup=back_button('info_top_processes'),
+        )
+        return
+
+    lines = [
+        '🔎 <b>Процесс</b>',
+        '',
+        f"• Имя: {escape_html(item['name'])}",
+        f"• PID: <code>{item['pid']}</code>",
+        f"• PPID: <code>{item['ppid']}</code>",
+        f"• Пользователь: {escape_html(item['username'])}",
+        f"• Статус: {escape_html(item['status'])}",
+        f"• CPU: <b>{item['cpu_percent']:.1f}%</b>",
+        f"• RAM: <b>{escape_html(format_size(item['rss']))}</b> ({item['ram_percent']:.1f}%)",
+        f"• VMS: {escape_html(format_size(item['vms']))}",
+        f"• Потоки: {item['threads']}",
+        f"• Uptime: {escape_html(item['uptime'])}",
+        '',
+        '<b>Команда</b>',
+        f"<code>{escape_html(item['cmdline'])}</code>",
+    ]
+    await query.edit_message_text(
+        '\n'.join(lines),
+        reply_markup=process_detail_keyboard(pid),
         parse_mode='HTML',
     )

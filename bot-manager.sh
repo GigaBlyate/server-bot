@@ -3,15 +3,7 @@ set -Eeuo pipefail
 
 INSTALL_DIR="/home/gigablyate/server-bot"
 SERVICE="server-bot"
-TELEMETRY_URL="https://g-panel.top"
 ROOT_HELPER="/usr/local/bin/server-bot-rootctl"
-
-send_uninstall() {
-  local py="${INSTALL_DIR}/venv/bin/python"
-  if [[ -x "$py" && -f "${INSTALL_DIR}/telemetry_ctl.py" ]]; then
-    TELEMETRY_URL="${TELEMETRY_URL}" "$py" "${INSTALL_DIR}/telemetry_ctl.py" uninstall >/dev/null 2>&1 || true
-  fi
-}
 
 backup_bot() {
   local ts backup_dir archive
@@ -63,7 +55,6 @@ while true; do
     3)
       read -r -p "Точно удалить бота? [y/n]: " confirm
       if [[ "$confirm" =~ ^[Yy]$ ]]; then
-        send_uninstall
         sudo systemctl stop "$SERVICE" || true
         sudo systemctl disable "$SERVICE" || true
         sudo rm -f /etc/systemd/system/server-bot.service /etc/sudoers.d/server-bot-$(id -un) /usr/local/bin/bot /usr/local/bin/server-bot-rootctl

@@ -17,7 +17,6 @@ MANAGER_PATH="/usr/local/bin/bot"
 ROOT_HELPER_PATH="/usr/local/bin/server-bot-rootctl"
 LOG_FILE="${HOME}/install-bot.log"
 ERROR_LOG="${HOME}/install-bot-errors.log"
-TELEMETRY_URL_FIXED="https://g-panel.top"
 INSTALL_LANG="ru"
 SCRIPT_SOURCE="${BASH_SOURCE[0]:-}"
 TMP_BACKUP_DIR=""
@@ -58,8 +57,8 @@ msg() {
     ru:need_sudo) echo "sudo не найден" ;;
     en:need_sudo_rights) echo "sudo privileges are required" ;;
     ru:need_sudo_rights) echo "Нужны права sudo" ;;
-    en:terms_title) echo "Telemetry consent" ;;
-    ru:terms_title) echo "Согласие на отправку статистики" ;;
+    en:terms_title) echo "Continue installation" ;;
+    ru:terms_title) echo "Продолжить установку" ;;
     en:mode_title) echo "Choose installation mode" ;;
     ru:mode_title) echo "Выбор режима установки" ;;
     en:remove_title) echo "Remove bot completely" ;;
@@ -80,52 +79,14 @@ msg() {
     ru:integrity_title) echo "Проверяю целостность файлов" ;;
     en:start_title) echo "Starting bot" ;;
     ru:start_title) echo "Запускаю бота" ;;
-    en:consent_header) echo "Anonymous private installation statistics are required to use G-PANEL." ;;
-    ru:consent_header) echo "Для использования G-PANEL требуется согласие на обезличенную приватную статистику установки." ;;
-    en:consent_body) cat <<'EOF'
-The bot sends only the minimum anonymous technical data needed by the project owner:
-- random install ID
-- random server ID derived locally and sent only as a hash
-- bot version
-- event type: install / heartbeat / uninstall
-- event time
-- service signature secret for signed telemetry requests
-
-The bot does NOT send:
-- IP address
-- hostname or domains
-- bot token, admin ID or .env contents
-- messages, commands or backups
-- files, database contents, certificates or server secrets
-
-This telemetry does not provide access to your server, does not contain sensitive data,
-is not published on any website and is available only to the project owner inside Telegram.
-EOF
- ;;
-    ru:consent_body) cat <<'EOF'
-Бот отправляет только минимальные обезличенные технические данные, нужные владельцу проекта:
-- случайный ID установки
-- случайный ID сервера, вычисленный локально и отправляемый только в виде хеша
-- версию бота
-- тип события: install / heartbeat / uninstall
-- время события
-- служебный ключ подписи для подписанных telemetry-запросов
-
-Бот НЕ отправляет:
-- IP-адрес
-- hostname и домены
-- токен бота, ADMIN_ID и содержимое .env
-- сообщения, команды и бэкапы
-- файлы, содержимое базы, сертификаты и секреты сервера
-
-Эта статистика не даёт доступа к серверу, не содержит чувствительных данных,
-не публикуется на сайте и доступна только владельцу проекта внутри Telegram.
-EOF
- ;;
+    en:consent_header) echo "Continue installation." ;;
+    ru:consent_header) echo "Продолжить установку." ;;
+    en:consent_body) echo "" ;;
+    ru:consent_body) echo "" ;;
     en:type_yes) echo "To continue, type y. To cancel, type n." ;;
     ru:type_yes) echo "Чтобы продолжить, введите y. Чтобы отменить, введите n." ;;
-    en:declined) echo "Installation cancelled because telemetry consent was not granted." ;;
-    ru:declined) echo "Установка отменена: согласие на отправку статистики не получено." ;;
+    en:declined) echo "Installation cancelled." ;;
+    ru:declined) echo "Установка отменена." ;;
     en:select_mode) echo "Choose installation mode:" ;;
     ru:select_mode) echo "Выберите режим установки:" ;;
     en:mode_install) echo "1) Install or update bot" ;;
@@ -353,13 +314,6 @@ clone_repo() {
   return 1
 }
 
-send_uninstall_telemetry() {
-  local py=""
-  py="${INSTALL_DIR}/venv/bin/python"
-  if [[ -x "$py" && -f "${INSTALL_DIR}/telemetry_ctl.py" ]]; then
-    TELEMETRY_URL="${TELEMETRY_URL_FIXED}" "$py" "${INSTALL_DIR}/telemetry_ctl.py" uninstall >/dev/null 2>&1 || true
-  fi
-}
 
 choose_mode() {
   print_step 3 "Выбор режима установки"
@@ -393,7 +347,6 @@ choose_mode() {
 
 remove_installation() {
   print_step 4 "$(msg remove_title)"
-  send_uninstall_telemetry
   sudo systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
   sudo systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
   sudo rm -f "$SERVICE_FILE" "$SUDOERS_FILE" "$MANAGER_PATH" "$ROOT_HELPER_PATH"
@@ -461,9 +414,6 @@ setup_env() {
   local server_name="MyVPS"
 
   echo "Сейчас будут заполнены основные настройки бота."
-  echo "TELEMETRY_URL будет жёстко установлен на ${TELEMETRY_URL_FIXED}.
-TELEMETRY_OWNER_TOKEN оставьте пустым на обычных пользовательских установках."
-  echo
 
   if [[ -f "$INSTALL_DIR/.env" ]]; then
     token="$(grep -E '^BOT_TOKEN=' "$INSTALL_DIR/.env" | head -1 | cut -d= -f2- || true)"
@@ -485,9 +435,6 @@ TELEMETRY_OWNER_TOKEN оставьте пустым на обычных поль
 BOT_TOKEN=${token}
 ADMIN_ID=${admin_id}
 SERVER_NAME=${server_name}
-TELEMETRY_URL=${TELEMETRY_URL_FIXED}
-TELEMETRY_ENABLED=true
-TELEMETRY_TIMEOUT=10
 ENVEOF
   chmod 600 "$INSTALL_DIR/.env"
   chmod 600 "$INSTALL_DIR/oauth-credentials.json" 2>/dev/null || true
@@ -630,15 +577,7 @@ set -Eeuo pipefail
 
 INSTALL_DIR="__INSTALL_DIR__"
 SERVICE="server-bot"
-TELEMETRY_URL="__TELEMETRY_URL__"
 ROOT_HELPER="__ROOT_HELPER__"
-
-send_uninstall() {
-  local py="${INSTALL_DIR}/venv/bin/python"
-  if [[ -x "$py" && -f "${INSTALL_DIR}/telemetry_ctl.py" ]]; then
-    TELEMETRY_URL="${TELEMETRY_URL}" "$py" "${INSTALL_DIR}/telemetry_ctl.py" uninstall >/dev/null 2>&1 || true
-  fi
-}
 
 backup_bot() {
   local ts backup_dir archive
@@ -690,7 +629,6 @@ while true; do
     3)
       read -r -p "Точно удалить бота? [y/n]: " confirm
       if [[ "$confirm" =~ ^[Yy]$ ]]; then
-        send_uninstall
         sudo systemctl stop "$SERVICE" || true
         sudo systemctl disable "$SERVICE" || true
         sudo rm -f /etc/systemd/system/server-bot.service /etc/sudoers.d/server-bot-$(id -un) /usr/local/bin/bot /usr/local/bin/server-bot-rootctl
@@ -712,7 +650,6 @@ done
 MANAGEREOF
 
   sed -i "s|__INSTALL_DIR__|${INSTALL_DIR}|g" "$INSTALL_DIR/bot-manager.sh"
-  sed -i "s|__TELEMETRY_URL__|${TELEMETRY_URL_FIXED}|g" "$INSTALL_DIR/bot-manager.sh"
   sed -i "s|__ROOT_HELPER__|${ROOT_HELPER_PATH}|g" "$INSTALL_DIR/bot-manager.sh"
 
   chmod 755 "$INSTALL_DIR/bot-manager.sh"
@@ -736,7 +673,6 @@ User=$(id -un)
 Group=$(id -gn)
 WorkingDirectory=${INSTALL_DIR}
 EnvironmentFile=${INSTALL_DIR}/.env
-Environment=TELEMETRY_URL=${TELEMETRY_URL_FIXED}
 Environment=BOT_ROOT_HELPER=${ROOT_HELPER_PATH}
 ExecStart=${VENV_DIR}/bin/python ${INSTALL_DIR}/bot.py
 Restart=on-failure

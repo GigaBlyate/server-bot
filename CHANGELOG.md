@@ -28,3 +28,5 @@
 - installer: mandatory telemetry agreement flow with detailed text
 - site: hidden contact email, anti-spam form, agreement modal, simpler privacy presentation
 - updater: fixed current version output when no updates are available
+
+- 3.2.8: removed telemetry and added detailed CPU/RAM process inspection

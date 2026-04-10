@@ -107,15 +107,16 @@ async def update_bot_code(progress_cb: ProgressCb = None) -> Tuple[bool, str]:
     commands = [
         ('Получаю изменения из GitHub', ['git', 'fetch', '--all']),
         ('Обновляю код проекта', ['git', 'reset', '--hard', 'origin/main']),
-        ('Обновляю Python зависимости', [str(pip_path), 'install', '--disable-pip-version-check', '--no-input', '-q', '-r', 'requirements.txt']),
+        ('Обновляю Python зависимости', [str(pip_path), 'install', '-r', 'requirements.txt']),
     ]
 
+    last_output = ''
     for title, cmd in commands:
         if progress_cb:
             progress_cb(title)
         code, out, err = await safe_run_command(cmd, timeout=1800, cwd=str(project_dir))
-        details = ((err or '') + '\n' + (out or '')).strip()
+        last_output = (out or err).strip()
         if code != 0:
-            return False, details or f'{title}: команда завершилась с кодом {code}'
+            return False, last_output or f'{title}: команда завершилась с кодом {code}'
 
-    return True, 'ok'
+    return True, last_output or 'Код бота обновлён.'

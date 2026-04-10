@@ -7,13 +7,12 @@ from telegram.ext import ContextTypes
 from core.auth import ensure_admin_access
 from handlers.backup import handle_backup_callback
 from handlers.dashboard import cancel_dashboard_refresh, show_dashboard_callback
-from handlers.info import show_certificates, show_info_menu, show_server_info, show_top_processes
+from handlers.info import show_certificates, show_info_menu, show_process_detail, show_process_list, show_server_info, show_top_processes
 from handlers.password import handle_password_callback
 from handlers.prosody import handle_prosody_callback, show_prosody_menu
 from handlers.ping import ask_custom_ping, run_predefined_ping, show_ping_menu
 from handlers.settings import handle_settings_callback, show_settings, show_traffic_menu
 from handlers.system import handle_system_callback
-from handlers.telemetry_stats import show_telemetry_recent, show_telemetry_stats
 from handlers.vps import handle_vps_callback
 
 
@@ -39,11 +38,21 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if data == 'info_top_processes':
         await show_top_processes(update, context)
         return
-    if data == 'telemetry_stats_menu':
-        await show_telemetry_stats(update, context)
+    if data == 'info_top_cpu':
+        await show_process_list(update, context, 'cpu')
         return
-    if data == 'telemetry_stats_recent':
-        await show_telemetry_recent(update, context)
+    if data == 'info_top_ram':
+        await show_process_list(update, context, 'ram')
+        return
+    if data.startswith('proc_pid_'):
+        try:
+            pid = int(data.split('_')[-1])
+        except Exception:
+            await update.callback_query.answer('Неверный PID')
+            return
+        await show_process_detail(update, context, pid)
+        return
+        return
         return
     if data == 'prosody_menu':
         await show_prosody_menu(update, context)

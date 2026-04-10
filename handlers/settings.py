@@ -116,9 +116,7 @@ async def _show_service_monitor(update: Update, context: ContextTypes.DEFAULT_TY
         lines.append('')
         lines.append('<b>Добавлено вручную:</b>')
         for item in manual_items[:8]:
-            label = item.get('label') or item.get('name')
-            status = (snapshot.get('data') or {}).get(label, 'unknown')
-            lines.append(f"• {label}: <b>{status}</b>")
+            lines.append(f"• {item.get('label') or item.get('name')}")
     if snapshot.get('scan_sources'):
         lines.append('')
         lines.append('Сканирование: ' + ', '.join(snapshot['scan_sources']))
@@ -403,14 +401,9 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 _save_manual_services(items)
 
             context.application.bot_data.pop('service_statuses', None)
-            snapshot = await get_service_scan_snapshot(context.application.bot_data, force=True)
-            label = item.get('label') or _humanize(item.get('name', 'service'))
-            status = (snapshot.get('data') or {}).get(label, 'unknown')
-            human = 'активен' if status == 'running' else status
             await update.message.reply_text(
-                f"✅ Добавлено: {label}\nТекущий статус: <b>{human}</b>",
+                f"✅ Добавлено: {item.get('label') or _humanize(item.get('name', 'service'))}",
                 reply_markup=back_main_keyboard('service_monitor_menu', 'menu'),
-                parse_mode='HTML',
             )
 
         else:

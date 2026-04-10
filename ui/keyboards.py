@@ -7,7 +7,6 @@ from typing import Dict, Iterable, List
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from config import SHOW_PROJECT_STATS
 
 
 def menu_keyboard() -> InlineKeyboardMarkup:
@@ -52,10 +51,8 @@ def info_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton('🖥️ О сервере', callback_data='info_server')],
         [InlineKeyboardButton('🔥 CPU/RAM процессы', callback_data='info_top_processes')],
         [InlineKeyboardButton('🔐 Сертификаты', callback_data='info_certs')],
+        [InlineKeyboardButton('◀️ Назад', callback_data='menu')],
     ]
-    if SHOW_PROJECT_STATS:
-        rows.append([InlineKeyboardButton('📊 Статистика проекта', callback_data='telemetry_stats_menu')])
-    rows.append([InlineKeyboardButton('◀️ Назад', callback_data='menu')])
     return InlineKeyboardMarkup(rows)
 
 
@@ -348,75 +345,40 @@ def smart_backup_keyboard(
     return InlineKeyboardMarkup(keyboard)
 
 
-def telemetry_stats_keyboard() -> InlineKeyboardMarkup:
+
+def process_overview_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton('📊 Общая статистика', callback_data='telemetry_stats_menu')],
-            [InlineKeyboardButton('📈 Последняя активность', callback_data='telemetry_stats_recent')],
+            [
+                InlineKeyboardButton('⚙️ Топ CPU', callback_data='info_top_cpu'),
+                InlineKeyboardButton('🧠 Топ RAM', callback_data='info_top_ram'),
+            ],
             [InlineKeyboardButton('◀️ Назад', callback_data='info_menu')],
         ]
     )
 
 
-def prosody_menu_keyboard(confirm_action: str | None = None, back_target: str = 'prosody_menu') -> InlineKeyboardMarkup:
-    if confirm_action:
-        return InlineKeyboardMarkup([
-            [InlineKeyboardButton('✅ Да', callback_data=confirm_action), InlineKeyboardButton('❌ Нет', callback_data=back_target)],
-            [InlineKeyboardButton('🏠 Главное меню', callback_data='menu')],
-        ])
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton('📋 Список клиентов', callback_data='prosody_list_menu')],
-        [InlineKeyboardButton('⬆️ Обновить Prosody', callback_data='prosody_update_confirm')],
-        [InlineKeyboardButton('🔁 Перезагрузить Prosody', callback_data='prosody_restart_confirm')],
-        [InlineKeyboardButton('➕ Добавить клиента', callback_data='prosody_add_prompt')],
-        [InlineKeyboardButton('🗑 Удалить клиента', callback_data='prosody_delete_prompt')],
-        [InlineKeyboardButton('🔐 Сбросить пароль', callback_data='prosody_password_prompt')],
-        [InlineKeyboardButton('◀️ Назад', callback_data='menu'), InlineKeyboardButton('🏠 Главное меню', callback_data='menu')],
+def process_list_keyboard(items: list[dict], mode: str) -> InlineKeyboardMarkup:
+    rows = []
+    for item in items[:8]:
+        label = f"{item['name']} · PID {item['pid']}"
+        rows.append([InlineKeyboardButton(label[:60], callback_data=f"proc_pid_{item['pid']}")])
+    rows.append([
+        InlineKeyboardButton('⚙️ CPU', callback_data='info_top_cpu'),
+        InlineKeyboardButton('🧠 RAM', callback_data='info_top_ram'),
     ])
-
-
-def prosody_domains_keyboard(domains: List[str], purpose: str = 'list') -> InlineKeyboardMarkup:
-    rows: List[List[InlineKeyboardButton]] = []
-    prefix_map = {
-        'list': 'prosody_list_domain:',
-        'password': 'prosody_password_domain:',
-        'delete': 'prosody_delete_domain:',
-    }
-    prefix = prefix_map.get(purpose, 'prosody_list_domain:')
-    for domain in domains[:20]:
-        rows.append([InlineKeyboardButton(domain, callback_data=f'{prefix}{domain}')])
-    back_target = 'prosody_menu'
-    rows.append([InlineKeyboardButton('◀️ Назад', callback_data=back_target), InlineKeyboardButton('🏠 Главное меню', callback_data='menu')])
+    rows.append([InlineKeyboardButton('◀️ Назад', callback_data='info_top_processes')])
     return InlineKeyboardMarkup(rows)
 
 
-def prosody_users_keyboard(domain: str, users: List[str], page: int, page_size: int = 12, action: str = 'list') -> InlineKeyboardMarkup:
-    rows: List[List[InlineKeyboardButton]] = []
-    start = page * page_size
-    end = min(start + page_size, len(users))
-    callback_prefix = {
-        'list': 'prosody_user_actions:',
-        'password': 'prosody_password_select:',
-        'delete': 'prosody_delete_confirm:',
-    }.get(action, 'prosody_user_actions:')
-    for jid in users[start:end]:
-        label = jid if len(jid) <= 32 else jid[:29] + '…'
-        icon = '👤' if action == 'list' else ('🔐' if action == 'password' else '🗑')
-        rows.append([InlineKeyboardButton(f'{icon} {label}', callback_data=f'{callback_prefix}{jid}')])
-    nav: List[InlineKeyboardButton] = []
-    if page > 0:
-        nav.append(InlineKeyboardButton('⬅️', callback_data=f'prosody_{action}_domain:{domain}|{page-1}'))
-    if end < len(users):
-        nav.append(InlineKeyboardButton('➡️', callback_data=f'prosody_{action}_domain:{domain}|{page+1}'))
-    if nav:
-        rows.append(nav)
-    rows.append([InlineKeyboardButton('◀️ Домены', callback_data=f'prosody_{action}_menu'), InlineKeyboardButton('🏠 Главное меню', callback_data='menu')])
-    return InlineKeyboardMarkup(rows)
-
-
-def prosody_user_actions_keyboard(jid: str, back_target: str = 'prosody_list_menu') -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton('🔐 Сбросить пароль', callback_data=f'prosody_password_select:{jid}')],
-        [InlineKeyboardButton('🗑 Удалить клиента', callback_data=f'prosody_delete_confirm:{jid}')],
-        [InlineKeyboardButton('◀️ Назад', callback_data=back_target), InlineKeyboardButton('🏠 Главное меню', callback_data='menu')],
-    ])
+def process_detail_keyboard(pid: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton('🔄 Обновить', callback_data=f'proc_pid_{pid}')],
+            [
+                InlineKeyboardButton('⚙️ Топ CPU', callback_data='info_top_cpu'),
+                InlineKeyboardButton('🧠 Топ RAM', callback_data='info_top_ram'),
+            ],
+            [InlineKeyboardButton('◀️ Назад', callback_data='info_top_processes')],
+        ]
+    )

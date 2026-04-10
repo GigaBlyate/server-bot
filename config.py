@@ -29,11 +29,5 @@ BACKUP_DIR = os.path.join(os.path.dirname(__file__), 'backups')
 PROJECT_DIR = os.path.dirname(__file__)
 DB_PATH = os.path.join(PROJECT_DIR, 'vps_data.db')
 
-# Private anonymous installation statistics
-TELEMETRY_URL = os.environ.get('TELEMETRY_URL', '').strip().rstrip('/')
-TELEMETRY_ENABLED = os.environ.get('TELEMETRY_ENABLED', 'true').strip().lower() == 'true'
-TELEMETRY_TIMEOUT = int(os.environ.get('TELEMETRY_TIMEOUT', '10') or '10')
-TELEMETRY_OWNER_TOKEN = os.environ.get('TELEMETRY_OWNER_TOKEN', '').strip()
-SHOW_PROJECT_STATS = bool(TELEMETRY_OWNER_TOKEN)
 
 ROOT_HELPER = os.environ.get('BOT_ROOT_HELPER', '/usr/local/bin/server-bot-rootctl')

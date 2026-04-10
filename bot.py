@@ -25,11 +25,9 @@ from handlers.callbacks import callback_router
 from handlers.dashboard import send_dashboard_to_chat, start_command, status_command
 from handlers.ping import show_ping_menu
 from handlers.system import clear_reboot_marker, read_reboot_marker, reboot_command, update_system_command
-from handlers.telemetry_stats import show_telemetry_stats
 from handlers.text_input import text_router
 from handlers.vps import show_vps_menu
 from security import rate_limit
-from services.telemetry import telemetry_enabled
 
 LOG_PATH = Path(config.LOG_DIR)
 LOG_PATH.mkdir(parents=True, exist_ok=True)
@@ -151,12 +149,6 @@ async def list_vps_wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 @rate_limit
-async def telemetry_wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await ensure_admin_access(update):
-        return
-    await show_telemetry_stats(update, context)
-
-@rate_limit
 async def help_wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await ensure_admin_access(update):
         return
@@ -215,7 +207,6 @@ async def post_init(application: Application) -> None:
     application.bot_data['admin_id'] = str(config.ADMIN_CHAT_ID)
     setup_jobs(application)
     logger.info('Bot post-init completed')
-    logger.info('Private install telemetry: %s', 'enabled' if telemetry_enabled() else 'disabled')
     if application.job_queue is not None:
         application.job_queue.run_once(_send_post_reboot_notification, when=2)
 
@@ -239,7 +230,6 @@ def main() -> None:
     application.add_handler(CommandHandler('listvps', list_vps_wrapper))
     application.add_handler(CommandHandler('password', password_wrapper))
     application.add_handler(CommandHandler('help', help_wrapper))
-    application.add_handler(CommandHandler('telemetry', telemetry_wrapper))
 
     application.add_handler(CallbackQueryHandler(callback_router))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))

@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 import psutil
 
-from core.db import get_json_setting, get_setting, set_setting
+from core.db import get_json_setting, get_setting
 from core.formatting import format_size, format_uptime
 from security import safe_run_command
 from services.geolocation import get_public_ip_info
@@ -128,24 +128,6 @@ def _manual_service_definitions() -> List[Dict[str, str]]:
     return result[:20]
 
 
-
-
-def _save_manual_service_definitions(items: List[Dict[str, str]]) -> None:
-    set_setting('manual_services_json', json.dumps(items, ensure_ascii=False))
-
-
-def _prune_missing_manual_services(items: List[Dict[str, str]], statuses: Dict[str, str]) -> List[Dict[str, str]]:
-    kept: List[Dict[str, str]] = []
-    changed = False
-    for item in items:
-        label = item.get('label') or _humanize_service_name(item.get('name') or '')
-        if statuses.get(label) == 'not found':
-            changed = True
-            continue
-        kept.append(item)
-    if changed:
-        _save_manual_service_definitions(kept)
-    return kept
 def _normalize(value: str) -> str:
     return re.sub(r'[^a-z0-9]+', '', value.lower())
 
@@ -414,20 +396,12 @@ async def get_service_statuses(bot_data: Dict[str, Any], force: bool = False) ->
         result[label] = status
         auto_labels.append(label)
 
-    manual_items = _manual_service_definitions()
     manual_labels: List[str] = []
-    for item in manual_items:
+    for item in _manual_service_definitions():
         label = item['label']
         status = _status_for_manual_service(item, systemd_units, unit_files, processes, docker_containers)
         result[label] = status
         manual_labels.append(label)
-
-    if force and manual_items:
-        manual_items = _prune_missing_manual_services(manual_items, result)
-        removed_labels = {label for label, status in result.items() if status == 'not found' and label not in auto_labels and label not in {item['label'] for item in manual_items}}
-        for label in removed_labels:
-            result.pop(label, None)
-        manual_labels = [item['label'] for item in manual_items]
 
     bot_data['service_statuses'] = {
         'cached_at': time.time(),
@@ -551,7 +525,7 @@ def _collect_top_processes(limit: int = 7, sample_interval: float = 0.35) -> Dic
                 cpu = float(proc.cpu_percent(None) or 0.0)
                 mem = proc.memory_info().rss or 0
                 name = str(proc.name() or 'unknown').strip() or 'unknown'
-                cmdline = _truncate_cmdline(' '.join(proc.cmdline() or []))
+                cmdline = _truncate_cmdline(' '.join(proc.cmdline() or []), limit=140)
                 rows.append({
                     'pid': int(proc.pid),
                     'name': name,
@@ -574,5 +548,38 @@ def _collect_top_processes(limit: int = 7, sample_interval: float = 0.35) -> Dic
     }
 
 
+def _get_process_detail(pid: int) -> Dict[str, Any] | None:
+    try:
+        proc = psutil.Process(pid)
+        with proc.oneshot():
+            mem = proc.memory_info()
+            vm = psutil.virtual_memory()
+            create_time = datetime.fromtimestamp(proc.create_time())
+            cmdline = ' '.join(proc.cmdline() or [])
+            return {
+                'pid': proc.pid,
+                'name': proc.name(),
+                'status': str(proc.status()),
+                'username': str(proc.username() or 'unknown'),
+                'cpu_percent': float(proc.cpu_percent(interval=0.2) or 0.0),
+                'rss': int(mem.rss or 0),
+                'vms': int(mem.vms or 0),
+                'ram_percent': round(((mem.rss or 0) / (vm.total or 1)) * 100, 1),
+                'threads': int(proc.num_threads()),
+                'uptime': format_uptime(max(0, time.time() - proc.create_time())),
+                'cmdline': cmdline or proc.name(),
+                'exe': proc.exe() if hasattr(proc, 'exe') else '',
+                'ppid': int(proc.ppid()),
+            }
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return None
+    except Exception:
+        return None
+
+
 async def get_top_processes(limit: int = 7) -> Dict[str, Any]:
     return await asyncio.to_thread(_collect_top_processes, limit)
+
+
+async def get_process_detail(pid: int) -> Dict[str, Any] | None:
+    return await asyncio.to_thread(_get_process_detail, pid)

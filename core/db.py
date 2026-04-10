@@ -54,11 +54,6 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     'last_backup_success': '',
     'last_backup_size_mb': '0',
     'dashboard_autorefresh': 'true',
-    'telemetry_install_id': '',
-    'telemetry_registered': 'false',
-    'telemetry_last_sent': '',
-    'telemetry_auth_secret': '',
-    'telemetry_consent_version': '2',
     'manual_services_json': '[]',
 }
 
