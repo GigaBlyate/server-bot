@@ -809,3 +809,4 @@ main() {
 }
 
 main "$@"
+# fix marker 2026-04-10 apt-update + prosody helper
