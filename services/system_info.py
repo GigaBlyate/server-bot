@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 import psutil
 
-from core.db import get_json_setting, get_setting
+from core.db import get_json_setting, get_setting, set_setting
 from core.formatting import format_size, format_uptime
 from security import safe_run_command
 from services.geolocation import get_public_ip_info
@@ -128,6 +128,24 @@ def _manual_service_definitions() -> List[Dict[str, str]]:
     return result[:20]
 
 
+
+
+def _save_manual_service_definitions(items: List[Dict[str, str]]) -> None:
+    set_setting('manual_services_json', json.dumps(items, ensure_ascii=False))
+
+
+def _prune_missing_manual_services(items: List[Dict[str, str]], statuses: Dict[str, str]) -> List[Dict[str, str]]:
+    kept: List[Dict[str, str]] = []
+    changed = False
+    for item in items:
+        label = item.get('label') or _humanize_service_name(item.get('name') or '')
+        if statuses.get(label) == 'not found':
+            changed = True
+            continue
+        kept.append(item)
+    if changed:
+        _save_manual_service_definitions(kept)
+    return kept
 def _normalize(value: str) -> str:
     return re.sub(r'[^a-z0-9]+', '', value.lower())
 
@@ -396,12 +414,20 @@ async def get_service_statuses(bot_data: Dict[str, Any], force: bool = False) ->
         result[label] = status
         auto_labels.append(label)
 
+    manual_items = _manual_service_definitions()
     manual_labels: List[str] = []
-    for item in _manual_service_definitions():
+    for item in manual_items:
         label = item['label']
         status = _status_for_manual_service(item, systemd_units, unit_files, processes, docker_containers)
         result[label] = status
         manual_labels.append(label)
+
+    if force and manual_items:
+        manual_items = _prune_missing_manual_services(manual_items, result)
+        removed_labels = {label for label, status in result.items() if status == 'not found' and label not in auto_labels and label not in {item['label'] for item in manual_items}}
+        for label in removed_labels:
+            result.pop(label, None)
+        manual_labels = [item['label'] for item in manual_items]
 
     bot_data['service_statuses'] = {
         'cached_at': time.time(),

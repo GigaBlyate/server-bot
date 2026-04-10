@@ -67,7 +67,9 @@ async def build_dashboard_text(
     geo = snapshot['public_geo']
     service_lines = []
     for name, status in snapshot['services'].items():
-        service_lines.append(f'{_service_icon(status)} {escape_html(name)}: {escape_html(status)}')
+        if str(status).lower() != 'running':
+            continue
+        service_lines.append(f'{_service_icon(status)} {escape_html(name)}: активен')
 
     due_vps = build_vps_summary(30)
     certs = await get_expiring_certificates(bot_data, 30)
