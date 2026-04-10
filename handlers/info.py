@@ -32,10 +32,6 @@ async def show_server_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await query.answer()
     info = await get_server_info(context.application.bot_data)
     geo = info['public_geo']
-    service_lines = []
-    for name, status in info['services'].items():
-        service_lines.append(f'• {escape_html(name)} — {escape_html(status)}')
-
     docker_line = 'Docker недоступен'
     if info['docker_total'] is not None:
         docker_line = f'{info["docker_running"]}/{info["docker_total"]} контейнеров запущено'
@@ -78,9 +74,6 @@ async def show_server_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         f'• ASN: {escape_html(geo.get("asn", "N/A"))}',
         f'• Локальные IP: {escape_html(", ".join(info["local_ips"]) or "N/A")}',
         f'• Docker: {escape_html(docker_line)}',
-        '',
-        '<b>Ключевые сервисы</b>',
-        *service_lines[:7],
     ]
     await query.edit_message_text(
         '\n'.join(text_lines),
