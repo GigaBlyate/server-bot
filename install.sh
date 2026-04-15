@@ -215,7 +215,13 @@ ensure_packages() {
 
 
 setup_vnstat() {
-  local iface="eth0"
+  local iface=""
+  iface="$(ip -o route show default 2>/dev/null | awk '/default/ {for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
+  if [[ -z "$iface" ]]; then
+    iface="$(ip -br link 2>/dev/null | awk '$1 != "lo" {print $1; exit}')"
+  fi
+  [[ -n "$iface" ]] || iface="eth0"
+
   print_info "Настраиваю vnStat для интерфейса ${iface}"
 
   if ! command -v vnstat >/dev/null 2>&1; then
@@ -227,6 +233,11 @@ setup_vnstat() {
   sudo vnstat --add -i "$iface" >> "$LOG_FILE" 2>> "$ERROR_LOG" || \
     sudo vnstat -u -i "$iface" >> "$LOG_FILE" 2>> "$ERROR_LOG" || true
   sudo systemctl restart vnstat >/dev/null 2>&1 || sudo systemctl restart vnstatd >/dev/null 2>&1 || true
+
+  if [[ -f "${INSTALL_DIR}/vps_data.db" ]]; then
+    sqlite3 "${INSTALL_DIR}/vps_data.db" "UPDATE settings SET value='${iface}' WHERE key='traffic_interface';" >/dev/null 2>&1 || true
+  fi
+
   print_ok "vnStat настроен для ${iface}"
 }
 
@@ -749,6 +760,7 @@ main() {
       setup_logs_and_rights
       install_manager
       setup_service
+      setup_vnstat
       integrity_check
       start_service
       ;;
