@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import shutil
+import subprocess
 from calendar import monthrange
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, Tuple
@@ -59,38 +61,126 @@ def _setdefault(key: str, value: Any) -> Any:
     return current
 
 
-def _raw_total_bytes() -> int:
-    c = psutil.net_io_counters()
-    return int(c.bytes_sent) + int(c.bytes_recv)
+def get_traffic_interface() -> str:
+    return str(get_setting('traffic_interface', 'eth0') or 'eth0').strip() or 'eth0'
 
 
-def _update_monotonic_total() -> int:
-    """Maintain a total counter that never decreases across reboot/service restart."""
-    raw_total = _raw_total_bytes()
-    last_raw = _safe_int(get_setting('traffic_last_raw_total_bytes', ''), -1)
-    monotonic_total = _safe_int(get_setting('traffic_monotonic_total_bytes', ''), -1)
+def _parse_vnstat_oneline_bytes(output: str) -> Tuple[int, int] | None:
+    text = (output or '').strip()
+    if not text:
+        return None
+    parts = [item.strip() for item in text.split(';')]
+    if len(parts) < 15:
+        return None
+    try:
+        recv = int(parts[12])
+        sent = int(parts[13])
+        return sent, recv
+    except Exception:
+        return None
 
-    if monotonic_total < 0:
-        monotonic_total = raw_total
-        set_setting('traffic_monotonic_total_bytes', str(monotonic_total))
-        set_setting('traffic_last_raw_total_bytes', str(raw_total))
-        set_setting('traffic_last_total_updated_at', _now().isoformat(timespec='seconds'))
-        return monotonic_total
 
-    if last_raw < 0:
-        last_raw = raw_total
+def _get_vnstat_counters(interface: str) -> Tuple[int, int] | None:
+    vnstat_bin = shutil.which('vnstat')
+    if not vnstat_bin:
+        return None
 
-    delta = raw_total - last_raw
+    try:
+        proc = subprocess.run(
+            [vnstat_bin, '--oneline', 'b', '-i', interface],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except Exception as exc:
+        logger.debug('vnStat execution failed for %s: %s', interface, exc)
+        return None
+
+    if proc.returncode != 0:
+        stderr = (proc.stderr or '').strip()
+        if stderr:
+            logger.debug('vnStat returned non-zero for %s: %s', interface, stderr)
+        return None
+
+    parsed = _parse_vnstat_oneline_bytes(proc.stdout)
+    if parsed is None:
+        logger.debug('Unable to parse vnStat oneline output for %s: %r', interface, proc.stdout)
+    return parsed
+
+
+def _get_psutil_counters(interface: str) -> Tuple[int, int]:
+    counters = psutil.net_io_counters(pernic=True)
+    nic = counters.get(interface)
+    if nic is None:
+        logger.warning('Traffic interface %s was not found in psutil.net_io_counters(pernic=True)', interface)
+        return 0, 0
+    return int(nic.bytes_sent), int(nic.bytes_recv)
+
+
+def get_interface_counters(interface: str | None = None) -> Tuple[int, int]:
+    target = (interface or get_traffic_interface()).strip()
+    vnstat_counters = _get_vnstat_counters(target)
+    if vnstat_counters is not None:
+        return vnstat_counters
+    return _get_psutil_counters(target)
+
+
+def _raw_usage() -> Dict[str, int]:
+    sent, recv = get_interface_counters()
+    return {
+        'sent': sent,
+        'recv': recv,
+        'total': sent + recv,
+    }
+
+
+def _save_total_snapshot(prefix: str, values: Dict[str, int]) -> None:
+    set_setting(f'{prefix}_sent_bytes', str(int(values['sent'])))
+    set_setting(f'{prefix}_recv_bytes', str(int(values['recv'])))
+    set_setting(f'{prefix}_total_bytes', str(int(values['total'])))
+
+
+def _load_total_snapshot(prefix: str, default: int = 0) -> Dict[str, int]:
+    sent = _safe_int(get_setting(f'{prefix}_sent_bytes', ''), default)
+    recv = _safe_int(get_setting(f'{prefix}_recv_bytes', ''), default)
+    total = _safe_int(get_setting(f'{prefix}_total_bytes', ''), sent + recv if default >= 0 else default)
+    if total < 0 and sent >= 0 and recv >= 0:
+        total = sent + recv
+    return {
+        'sent': sent,
+        'recv': recv,
+        'total': total,
+    }
+
+
+def _compute_monotonic_value(raw_value: int, last_value: int, monotonic_value: int) -> int:
+    if monotonic_value < 0:
+        return raw_value
+    if last_value < 0:
+        last_value = raw_value
+    delta = raw_value - last_value
     if delta >= 0:
-        monotonic_total += delta
-    else:
-        # System counters were reset (reboot / interface reset). Count from zero again.
-        monotonic_total += raw_total
+        return monotonic_value + delta
+    return monotonic_value + raw_value
 
-    set_setting('traffic_monotonic_total_bytes', str(monotonic_total))
-    set_setting('traffic_last_raw_total_bytes', str(raw_total))
+
+def _update_monotonic_totals() -> Dict[str, int]:
+    """Maintain interface counters that never decrease across reboot/service restart."""
+    raw = _raw_usage()
+    last_raw = _load_total_snapshot('traffic_last_raw', default=-1)
+    monotonic = _load_total_snapshot('traffic_monotonic', default=-1)
+
+    updated = {
+        'sent': _compute_monotonic_value(raw['sent'], last_raw['sent'], monotonic['sent']),
+        'recv': _compute_monotonic_value(raw['recv'], last_raw['recv'], monotonic['recv']),
+    }
+    updated['total'] = updated['sent'] + updated['recv']
+
+    _save_total_snapshot('traffic_monotonic', updated)
+    _save_total_snapshot('traffic_last_raw', raw)
     set_setting('traffic_last_total_updated_at', _now().isoformat(timespec='seconds'))
-    return monotonic_total
+    return updated
 
 
 def _advance_month(anchor: date) -> date:
@@ -115,7 +205,6 @@ def _resolve_period(start_hint: date | None = None) -> Tuple[date, date]:
     if current_start:
         start = current_start
         end = _advance_month(start)
-        # keep rolling until today is in period
         while today >= end:
             start = end
             end = _advance_month(start)
@@ -133,7 +222,6 @@ def _resolve_period(start_hint: date | None = None) -> Tuple[date, date]:
             end = _advance_month(start)
         return start, end
 
-    # Fallback for old installs: keep previous day-based semantics only until first proper cycle is initialized.
     cycle_days = _safe_int(get_setting('traffic_cycle_days', '30'), 30)
     start = today
     hint = _date_or_none(get_setting('traffic_cycle_start_date', ''))
@@ -145,8 +233,30 @@ def _resolve_period(start_hint: date | None = None) -> Tuple[date, date]:
     return start, end
 
 
-def _ensure_cycle_initialized(total_bytes: int) -> Tuple[date, date]:
+def _ensure_cycle_initialized(totals: Dict[str, int]) -> Tuple[date, date]:
     mode = get_setting('traffic_mode', 'unlimited')
+
+    anchor_date = _date_or_none(get_setting('traffic_today_anchor_date', ''))
+    if anchor_date is None:
+        set_setting('traffic_today_anchor_date', _today().isoformat())
+        _save_total_snapshot('traffic_today_anchor', totals)
+        _save_total_snapshot('traffic_yesterday', {'sent': 0, 'recv': 0, 'total': 0})
+    elif anchor_date != _today():
+        today = _today()
+        delta_days = (today - anchor_date).days
+        previous_anchor = _load_total_snapshot('traffic_today_anchor', default=0)
+        today_used = {
+            'sent': max(0, totals['sent'] - previous_anchor['sent']),
+            'recv': max(0, totals['recv'] - previous_anchor['recv']),
+        }
+        today_used['total'] = today_used['sent'] + today_used['recv']
+        if delta_days == 1:
+            _save_total_snapshot('traffic_yesterday', today_used)
+        else:
+            _save_total_snapshot('traffic_yesterday', {'sent': 0, 'recv': 0, 'total': 0})
+        set_setting('traffic_today_anchor_date', today.isoformat())
+        _save_total_snapshot('traffic_today_anchor', totals)
+
     if mode != 'quota':
         return _today(), _today()
 
@@ -157,33 +267,15 @@ def _ensure_cycle_initialized(total_bytes: int) -> Tuple[date, date]:
         set_setting('traffic_cycle_start_date', start.isoformat())
         if not activation:
             set_setting('traffic_activation_date', start.isoformat())
-        _setdefault('traffic_period_anchor_total_bytes', str(total_bytes))
+        _save_total_snapshot('traffic_period_anchor', totals)
         _setdefault('traffic_alert_sent_1tb', 'false')
         _setdefault('traffic_alert_sent_300gb', 'false')
-
-    # Today / yesterday anchors
-    anchor_date = _date_or_none(get_setting('traffic_today_anchor_date', ''))
-    if anchor_date is None:
-        set_setting('traffic_today_anchor_date', _today().isoformat())
-        set_setting('traffic_today_anchor_total_bytes', str(total_bytes))
-        set_setting('traffic_yesterday_total_bytes', '0')
-    elif anchor_date != _today():
-        today = _today()
-        delta_days = (today - anchor_date).days
-        today_used = max(0, total_bytes - _safe_int(get_setting('traffic_today_anchor_total_bytes', '0')))
-        if delta_days == 1:
-            set_setting('traffic_yesterday_total_bytes', str(today_used))
-        else:
-            set_setting('traffic_yesterday_total_bytes', '0')
-        set_setting('traffic_today_anchor_date', today.isoformat())
-        set_setting('traffic_today_anchor_total_bytes', str(total_bytes))
 
     start, end = _resolve_period(start)
     current_start = _date_or_none(get_setting('traffic_cycle_start_date', '')) or start
     if start != current_start:
-        # period has rolled over automatically
         set_setting('traffic_cycle_start_date', start.isoformat())
-        set_setting('traffic_period_anchor_total_bytes', str(total_bytes))
+        _save_total_snapshot('traffic_period_anchor', totals)
         set_setting('traffic_period_sync_used_bytes', '')
         set_setting('traffic_period_sync_total_bytes', '')
         set_setting('traffic_alert_sent_1tb', 'false')
@@ -192,19 +284,19 @@ def _ensure_cycle_initialized(total_bytes: int) -> Tuple[date, date]:
 
 
 def sync_current_period_usage_from_hoster(used_bytes: int) -> None:
-    total_bytes = _update_monotonic_total()
-    start, _ = _ensure_cycle_initialized(total_bytes)
+    totals = _update_monotonic_totals()
+    start, _ = _ensure_cycle_initialized(totals)
     set_setting('traffic_cycle_start_date', start.isoformat())
     set_setting('traffic_period_sync_used_bytes', str(max(0, int(used_bytes))))
-    set_setting('traffic_period_sync_total_bytes', str(total_bytes))
+    set_setting('traffic_period_sync_total_bytes', str(totals['total']))
     set_setting('traffic_period_sync_set_at', _now().isoformat(timespec='seconds'))
 
 
 def reset_current_period_anchor() -> None:
-    total_bytes = _update_monotonic_total()
-    start, _ = _ensure_cycle_initialized(total_bytes)
+    totals = _update_monotonic_totals()
+    start, _ = _ensure_cycle_initialized(totals)
     set_setting('traffic_cycle_start_date', start.isoformat())
-    set_setting('traffic_period_anchor_total_bytes', str(total_bytes))
+    _save_total_snapshot('traffic_period_anchor', totals)
     set_setting('traffic_period_sync_used_bytes', '')
     set_setting('traffic_period_sync_total_bytes', '')
     set_setting('traffic_alert_sent_1tb', 'false')
@@ -213,46 +305,63 @@ def reset_current_period_anchor() -> None:
 
 def get_quota_status() -> Dict[str, Any]:
     mode = get_setting('traffic_mode', 'unlimited')
-    total_bytes = _update_monotonic_total()
-    _ensure_cycle_initialized(total_bytes)
+    interface = get_traffic_interface()
+    totals = _update_monotonic_totals()
+    _ensure_cycle_initialized(totals)
 
-    today_anchor = _safe_int(get_setting('traffic_today_anchor_total_bytes', '0'))
-    today_bytes = max(0, total_bytes - today_anchor)
-    yesterday_bytes = _safe_int(get_setting('traffic_yesterday_total_bytes', '0'))
+    today_anchor = _load_total_snapshot('traffic_today_anchor', default=0)
+    today_usage = {
+        'sent': max(0, totals['sent'] - today_anchor['sent']),
+        'recv': max(0, totals['recv'] - today_anchor['recv']),
+    }
+    today_usage['total'] = today_usage['sent'] + today_usage['recv']
+    yesterday_usage = _load_total_snapshot('traffic_yesterday', default=0)
 
     if mode != 'quota':
         return {
             'mode': 'unlimited',
-            'label': 'Безлимитный трафик',
+            'interface': interface,
+            'label': f'Безлимитный трафик ({interface})',
             'remaining_gb': None,
             'used_gb': None,
             'quota_gb': None,
-            'total_bytes': total_bytes,
-            'yesterday_bytes': yesterday_bytes,
-            'today_bytes': today_bytes,
-            'current_bytes': today_bytes,
+            'total_bytes': totals['total'],
+            'total_sent_bytes': totals['sent'],
+            'total_recv_bytes': totals['recv'],
+            'yesterday_bytes': yesterday_usage['total'],
+            'yesterday_sent_bytes': yesterday_usage['sent'],
+            'yesterday_recv_bytes': yesterday_usage['recv'],
+            'today_bytes': today_usage['total'],
+            'today_sent_bytes': today_usage['sent'],
+            'today_recv_bytes': today_usage['recv'],
+            'current_bytes': today_usage['total'],
             'period_used_bytes': None,
+            'period_used_sent_bytes': None,
+            'period_used_recv_bytes': None,
             'days_left': None,
             'cycle_end': None,
         }
 
     quota_gb = _safe_float(get_setting('traffic_quota_gb', '3072'), 3072.0)
     start, end = _resolve_period(_date_or_none(get_setting('traffic_cycle_start_date', '')))
-    anchor_total = _safe_int(get_setting('traffic_period_anchor_total_bytes', '0'))
-    period_used_bytes = max(0, total_bytes - anchor_total)
+    anchor_totals = _load_total_snapshot('traffic_period_anchor', default=0)
+    period_usage = {
+        'sent': max(0, totals['sent'] - anchor_totals['sent']),
+        'recv': max(0, totals['recv'] - anchor_totals['recv']),
+    }
+    period_usage['total'] = period_usage['sent'] + period_usage['recv']
 
     sync_used = get_setting('traffic_period_sync_used_bytes', '')
     sync_total = get_setting('traffic_period_sync_total_bytes', '')
     if str(sync_used).strip() != '' and str(sync_total).strip() != '':
         sync_used_bytes = _safe_int(sync_used, 0)
-        sync_total_bytes = _safe_int(sync_total, total_bytes)
-        period_used_bytes = max(period_used_bytes, sync_used_bytes + max(0, total_bytes - sync_total_bytes))
+        sync_total_bytes = _safe_int(sync_total, totals['total'])
+        period_usage['total'] = max(period_usage['total'], sync_used_bytes + max(0, totals['total'] - sync_total_bytes))
 
-    # Safety: period usage must never exceed total usage tracked by bot.
-    if period_used_bytes > total_bytes:
-        period_used_bytes = total_bytes
+    if period_usage['total'] > totals['total']:
+        period_usage['total'] = totals['total']
 
-    used_gb = period_used_bytes / GB
+    used_gb = period_usage['total'] / GB
     remaining_gb = max(0.0, quota_gb - used_gb)
     overage_gb = max(0.0, used_gb - quota_gb)
     days_left = max(0, (end - _today()).days)
@@ -260,29 +369,44 @@ def get_quota_status() -> Dict[str, Any]:
 
     return {
         'mode': 'quota',
+        'interface': interface,
         'used_gb': used_gb,
         'remaining_gb': remaining_gb,
         'quota_gb': quota_gb,
-        'label': f'{format_gb(used_gb)} из {format_gb(quota_gb)}',
+        'label': f'{format_gb(used_gb)} из {format_gb(quota_gb)} ({interface})',
         'cycle_start': start.isoformat(),
         'cycle_end': end.isoformat(),
         'days_left': days_left,
         'overage_gb': overage_gb,
         'overage_price_rub_per_tb': overage_price_rub_per_tb,
-        'total_bytes': total_bytes,
-        'yesterday_bytes': yesterday_bytes,
-        'today_bytes': today_bytes,
-        'current_bytes': today_bytes,
-        'period_used_bytes': period_used_bytes,
+        'total_bytes': totals['total'],
+        'total_sent_bytes': totals['sent'],
+        'total_recv_bytes': totals['recv'],
+        'yesterday_bytes': yesterday_usage['total'],
+        'yesterday_sent_bytes': yesterday_usage['sent'],
+        'yesterday_recv_bytes': yesterday_usage['recv'],
+        'today_bytes': today_usage['total'],
+        'today_sent_bytes': today_usage['sent'],
+        'today_recv_bytes': today_usage['recv'],
+        'current_bytes': today_usage['total'],
+        'period_used_bytes': period_usage['total'],
+        'period_used_sent_bytes': period_usage['sent'],
+        'period_used_recv_bytes': period_usage['recv'],
     }
 
 
 def get_quota_summary_text() -> str:
     status = get_quota_status()
     if status['mode'] == 'unlimited':
-        return f'Трафик: безлимитный, всего {format_size(status["total_bytes"])}'
+        return (
+            f'Трафик {status["interface"]}: '
+            f'↑ {format_size(status["total_sent_bytes"])} / '
+            f'↓ {format_size(status["total_recv_bytes"])}'
+        )
     return (
-        f"Трафик: {format_size(status['period_used_bytes'])} из {format_gb(status['quota_gb'])}, "
+        f"Трафик {status['interface']}: ↑ {format_size(status['period_used_sent_bytes'])} / "
+        f"↓ {format_size(status['period_used_recv_bytes'])}, "
+        f"всего {format_size(status['period_used_bytes'])} из {format_gb(status['quota_gb'])}, "
         f"остаток {format_gb(status['remaining_gb'])} до {status['cycle_end']}"
     )
 
@@ -291,14 +415,19 @@ def get_dashboard_traffic_lines() -> list[str]:
     status = get_quota_status()
     if status['mode'] == 'unlimited':
         return [
-            f'• Трафик: всего {format_size(status["total_bytes"])}',
-            f'• Вчера: {format_size(status["yesterday_bytes"])} • Сегодня: {format_size(status["today_bytes"])}',
+            f'• Интерфейс: {status["interface"]}',
+            f'• Всего: ↑ {format_size(status["total_sent_bytes"])} / ↓ {format_size(status["total_recv_bytes"])}',
+            f'• Сегодня: ↑ {format_size(status["today_sent_bytes"])} / ↓ {format_size(status["today_recv_bytes"])}',
+            f'• Вчера: ↑ {format_size(status["yesterday_sent_bytes"])} / ↓ {format_size(status["yesterday_recv_bytes"])}',
             '• Статус: безлимитный',
         ]
     lines = [
-        f'• Трафик: всего {format_size(status["total_bytes"])}',
-        f'• Вчера: {format_size(status["yesterday_bytes"])} • Сегодня: {format_size(status["today_bytes"])}',
-        f'• Период: {format_size(status["period_used_bytes"])} из {format_gb(status["quota_gb"])}',
+        f'• Интерфейс: {status["interface"]}',
+        f'• Всего: ↑ {format_size(status["total_sent_bytes"])} / ↓ {format_size(status["total_recv_bytes"])}',
+        f'• Сегодня: ↑ {format_size(status["today_sent_bytes"])} / ↓ {format_size(status["today_recv_bytes"])}',
+        f'• Вчера: ↑ {format_size(status["yesterday_sent_bytes"])} / ↓ {format_size(status["yesterday_recv_bytes"])}',
+        f'• Период: ↑ {format_size(status["period_used_sent_bytes"])} / ↓ {format_size(status["period_used_recv_bytes"])}',
+        f'• Период всего: {format_size(status["period_used_bytes"])} из {format_gb(status["quota_gb"])}',
         f'• Остаток пакета: {format_gb(status["remaining_gb"])} • До сброса: {status["days_left"]} дн.',
     ]
     if float(status.get('overage_gb') or 0.0) > 0:
