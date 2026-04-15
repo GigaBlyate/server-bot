@@ -34,7 +34,7 @@ SYSTEM_PACKAGES=(
   git curl wget rsync ca-certificates sudo
   python3 python3-pip python3-venv python3-dotenv
   sqlite3 openssl iputils-ping dnsutils pciutils
-  lsb-release tar
+  lsb-release tar vnstat
 )
 
 print_sep() { printf '\n============================================================\n'; }
@@ -211,6 +211,23 @@ ensure_packages() {
 
   check_dpkg_health
   print_ok "Проверка и обновление системных пакетов завершены"
+}
+
+
+setup_vnstat() {
+  local iface="eth0"
+  print_info "Настраиваю vnStat для интерфейса ${iface}"
+
+  if ! command -v vnstat >/dev/null 2>&1; then
+    print_warn "vnStat не найден в системе"
+    return 0
+  fi
+
+  sudo systemctl enable --now vnstat >/dev/null 2>&1 || sudo systemctl enable --now vnstatd >/dev/null 2>&1 || true
+  sudo vnstat --add -i "$iface" >> "$LOG_FILE" 2>> "$ERROR_LOG" || \
+    sudo vnstat -u -i "$iface" >> "$LOG_FILE" 2>> "$ERROR_LOG" || true
+  sudo systemctl restart vnstat >/dev/null 2>&1 || sudo systemctl restart vnstatd >/dev/null 2>&1 || true
+  print_ok "vnStat настроен для ${iface}"
 }
 
 show_agreement() {
