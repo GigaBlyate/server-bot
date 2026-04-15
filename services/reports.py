@@ -75,9 +75,6 @@ async def build_dashboard_text(
         f'⚠️ {escape_html(item["common_name"])} — {days_left_text(item["days_left"])}'
         for item in certs[:5]
     ]
-    network_state = bot_data.get('network_state', {})
-    tx = format_size(float(network_state.get('tx_rate_bps', 0.0)))
-    rx = format_size(float(network_state.get('rx_rate_bps', 0.0)))
     updates_cache = await get_system_update_cache(bot_data)
     updates = updates_cache.get('count')
     updates_line = 'Проверка не выполнялась'
@@ -91,7 +88,6 @@ async def build_dashboard_text(
         f'CPU  {snapshot["cpu_percent"]:.1f}% {compact_bar(snapshot["cpu_percent"])}',
         f'RAM  {snapshot["ram_percent"]:.1f}% {compact_bar(snapshot["ram_percent"])}',
         f'SSD  {snapshot["disk_percent"]:.1f}% {compact_bar(snapshot["disk_percent"])}',
-        f'NET  ↑ {tx}/s  ↓ {rx}/s',
         f'UP   {escape_html(snapshot["uptime"])}',
         '',
         '<b>Сервер</b>',
@@ -170,7 +166,7 @@ async def build_daily_report(bot_data: Dict[str, Any]) -> str:
         f'RAM: {float(summary.get("avg_ram") or 0):.1f}% (пик {float(summary.get("max_ram") or 0):.1f}%)',
         f'SSD: {float(summary.get("avg_disk") or 0):.1f}% (пик {float(summary.get("max_disk") or 0):.1f}%)',
         f'Load average: {float(summary.get("avg_load1") or 0):.2f} / {float(summary.get("avg_load5") or 0):.2f} / {float(summary.get("avg_load15") or 0):.2f}',
-        f'Трафик за сутки: ↑ {format_size(summary.get("traffic_sent") or 0)} / ↓ {format_size(summary.get("traffic_recv") or 0)}',
+        f'Трафик {quota["interface"]} за сутки: ↑ {format_size(summary.get("traffic_sent") or 0)} / ↓ {format_size(summary.get("traffic_recv") or 0)}',
         '',
         '<b>Топ процессов по CPU</b>',
     ]
