@@ -19,6 +19,101 @@ GB = 1024 ** 3
 TB_GB = 1024
 
 
+IGNORED_INTERFACE_PREFIXES = (
+    'lo', 'docker', 'veth', 'br-', 'virbr', 'tun', 'tap', 'wg', 'zt', 'tailscale', 'ifb',
+)
+
+
+def _list_psutil_interfaces() -> list[str]:
+    try:
+        return sorted(psutil.net_io_counters(pernic=True).keys())
+    except Exception:
+        return []
+
+
+def _looks_virtual_interface(name: str) -> bool:
+    lowered = str(name or '').strip().lower()
+    return any(lowered.startswith(prefix) for prefix in IGNORED_INTERFACE_PREFIXES)
+
+
+def _detect_default_route_interface() -> str | None:
+    candidates = [
+        ['ip', '-o', 'route', 'show', 'default'],
+        ['ip', '-o', 'route', 'get', '1.1.1.1'],
+    ]
+    for cmd in candidates:
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=3, check=False)
+        except Exception:
+            continue
+        if proc.returncode != 0:
+            continue
+        text = (proc.stdout or '').strip()
+        if not text:
+            continue
+        parts = text.replace('\n', ' ').split()
+        for idx, token in enumerate(parts[:-1]):
+            if token == 'dev' and parts[idx + 1] != 'lo':
+                return parts[idx + 1]
+    return None
+
+
+def _detect_best_psutil_interface() -> str | None:
+    counters = psutil.net_io_counters(pernic=True)
+    stats = psutil.net_if_stats()
+
+    default_iface = _detect_default_route_interface()
+    if default_iface and default_iface in counters:
+        return default_iface
+
+    ranked: list[tuple[int, str]] = []
+    for name, nic in counters.items():
+        if name == 'lo' or _looks_virtual_interface(name):
+            continue
+        st = stats.get(name)
+        if st is not None and not st.isup:
+            continue
+        total = int(getattr(nic, 'bytes_sent', 0)) + int(getattr(nic, 'bytes_recv', 0))
+        ranked.append((total, name))
+
+    if ranked:
+        ranked.sort(reverse=True)
+        return ranked[0][1]
+
+    for name in counters.keys():
+        if name != 'lo':
+            return name
+    return None
+
+
+def _resolve_interface_name(requested: str | None = None) -> str:
+    requested = str(requested or '').strip()
+    available = _list_psutil_interfaces()
+    if requested and requested in available:
+        return requested
+
+    detected = _detect_best_psutil_interface()
+    if detected:
+        if requested and requested != detected:
+            logger.warning(
+                'Traffic interface %s was not found; auto-selected %s. Available interfaces: %s',
+                requested, detected, ', '.join(available) or 'none',
+            )
+            set_setting('traffic_interface', detected)
+        elif not requested:
+            set_setting('traffic_interface', detected)
+        return detected
+
+    if requested:
+        logger.warning(
+            'Traffic interface %s was not found and no fallback interface was detected. Available interfaces: %s',
+            requested, ', '.join(available) or 'none',
+        )
+        return requested
+
+    return 'eth0'
+
+
 def _as_bool(value: str) -> bool:
     return str(value).lower() == 'true'
 
@@ -62,7 +157,8 @@ def _setdefault(key: str, value: Any) -> Any:
 
 
 def get_traffic_interface() -> str:
-    return str(get_setting('traffic_interface', 'eth0') or 'eth0').strip() or 'eth0'
+    configured = str(get_setting('traffic_interface', 'eth0') or 'eth0').strip() or 'eth0'
+    return _resolve_interface_name(configured)
 
 
 def _parse_vnstat_oneline_bytes(output: str) -> Tuple[int, int] | None:
@@ -113,13 +209,16 @@ def _get_psutil_counters(interface: str) -> Tuple[int, int]:
     counters = psutil.net_io_counters(pernic=True)
     nic = counters.get(interface)
     if nic is None:
-        logger.warning('Traffic interface %s was not found in psutil.net_io_counters(pernic=True)', interface)
+        logger.warning(
+            'Traffic interface %s was not found in psutil.net_io_counters(pernic=True). Available interfaces: %s',
+            interface, ', '.join(sorted(counters.keys())) or 'none',
+        )
         return 0, 0
     return int(nic.bytes_sent), int(nic.bytes_recv)
 
 
 def get_interface_counters(interface: str | None = None) -> Tuple[int, int]:
-    target = (interface or get_traffic_interface()).strip()
+    target = _resolve_interface_name((interface or get_traffic_interface()).strip())
     vnstat_counters = _get_vnstat_counters(target)
     if vnstat_counters is not None:
         return vnstat_counters
