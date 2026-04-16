@@ -87,6 +87,7 @@ def settings_keyboard(settings: Dict[str, str]) -> InlineKeyboardMarkup:
                 callback_data='set_disk_threshold',
             )],
             [InlineKeyboardButton('💾 Хранилище', callback_data='storage_info')],
+            [InlineKeyboardButton('🧹 Очистка диска', callback_data='disk_cleanup_confirm')],
             [InlineKeyboardButton(
                 f'Ежедневный отчёт: {report}',
                 callback_data='toggle_daily_report',
