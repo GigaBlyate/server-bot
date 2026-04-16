@@ -440,6 +440,34 @@ async def set_system_update_cache(bot_data: Dict[str, Any], count: int, packages
     }
 
 
+def _format_storage_value(value_bytes: int) -> str:
+    mb = value_bytes / (1024 ** 2)
+    gb = value_bytes / (1024 ** 3)
+    return f'{mb:.1f} MB / {gb:.2f} GB'
+
+
+def get_storage_summary(path: str = '/') -> Dict[str, Any]:
+    disk = psutil.disk_usage(path)
+    partition = next((part for part in psutil.disk_partitions(all=False) if part.mountpoint == path), None)
+    device = partition.device if partition else 'unknown'
+    fs_type = partition.fstype if partition else 'unknown'
+    used_percent = float(disk.percent)
+    free_percent = max(0.0, 100.0 - used_percent)
+    return {
+        'path': path,
+        'device': device,
+        'fs_type': fs_type,
+        'total_bytes': int(disk.total),
+        'used_bytes': int(disk.used),
+        'free_bytes': int(disk.free),
+        'used_percent': used_percent,
+        'free_percent': free_percent,
+        'total_human': _format_storage_value(int(disk.total)),
+        'used_human': _format_storage_value(int(disk.used)),
+        'free_human': _format_storage_value(int(disk.free)),
+    }
+
+
 async def get_server_info(bot_data: Dict[str, Any]) -> Dict[str, Any]:
     mem = psutil.virtual_memory()
     disk = psutil.disk_usage('/')
