@@ -5,13 +5,15 @@ import json
 from datetime import date
 
 import config
+import psutil
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from core.db import get_all_settings, get_setting, set_setting
+from core.formatting import escape_html
 from core.scheduler import schedule_daily_report_job
 from security import safe_run_command, validate_google_drive_id
-from services.system_info import find_manual_service_candidate, get_service_scan_snapshot, get_storage_summary
+from services.system_info import find_manual_service_candidate, get_service_scan_snapshot
 from services.traffic_quota import (
     get_quota_summary_text,
     get_quota_status,
@@ -64,6 +66,99 @@ def _parse_human_bytes(text: str) -> int:
     return int(float(src) * 1024 ** 3)
 
 
+def _format_mb_gb(bytes_value: int | float) -> str:
+    size = max(0.0, float(bytes_value))
+    mb = size / (1024 ** 2)
+    gb = size / (1024 ** 3)
+    return f'{mb:,.1f} MB / {gb:,.2f} GB'.replace(',', ' ')
+
+
+def _storage_text(path: str = '/') -> str:
+    usage = psutil.disk_usage(path)
+    free_percent = max(0.0, 100.0 - float(usage.percent))
+    return (
+        '💾 <b>Хранилище сервера</b>\n\n'
+        f'Точка монтирования: <code>{path}</code>\n'
+        f'• Занято: <b>{_format_mb_gb(usage.used)}</b> ({usage.percent:.1f}%)\n'
+        f'• Свободно: <b>{_format_mb_gb(usage.free)}</b> ({free_percent:.1f}%)\n'
+        f'• Всего: <b>{_format_mb_gb(usage.total)}</b> (100%)'
+    )
+
+
+def _root_helper(*args: str) -> list[str]:
+    return ['sudo', config.ROOT_HELPER, *args]
+
+
+async def _show_storage_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        _storage_text('/'),
+        reply_markup=back_main_keyboard('settings_menu', 'menu'),
+        parse_mode='HTML',
+    )
+
+
+async def _show_disk_cleanup_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    text = (
+        '🧹 <b>Безопасная очистка диска</b>\n\n'
+        'Будут удалены только безопасные категории мусора:\n'
+        '• временные файлы в <code>/tmp</code> и <code>/var/tmp</code> старше 14 дней;\n'
+        '• старые журналы systemd старше 180 дней;\n'
+        '• старые ротированные логи в <code>/var/log</code> старше 180 дней;\n'
+        '• старые crash dump файлы старше 180 дней;\n'
+        '• кэш пакетов APT.\n\n'
+        'Не удаляются:\n'
+        '• проекты, базы данных, конфиги, docker-данные;\n'
+        '• домашние каталоги и пользовательские файлы;\n'
+        '• активные текущие логи.\n\n'
+        'Запустить безопасную очистку сейчас?'
+    )
+    from ui.keyboards import confirm_keyboard
+    await query.edit_message_text(
+        text,
+        reply_markup=confirm_keyboard('disk_cleanup_run', 'settings_menu'),
+        parse_mode='HTML',
+    )
+
+
+async def _perform_disk_cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    before = psutil.disk_usage('/')
+    await query.edit_message_text('⏳ Выполняю безопасную очистку диска...', parse_mode='HTML')
+    code, out, err = await safe_run_command(_root_helper('cleanup-disk-safe', '180'), timeout=1200)
+    after = psutil.disk_usage('/')
+    freed = max(0, int(after.free) - int(before.free))
+
+    details = (out or err or '').strip()
+    if code != 0:
+        await query.edit_message_text(
+            '❌ <b>Очистка диска завершилась с ошибкой</b>\n\n'
+            f'<code>{escape_html(details[-3000:] or "Неизвестная ошибка")}</code>',
+            reply_markup=back_main_keyboard('settings_menu', 'menu'),
+            parse_mode='HTML',
+        )
+        return
+
+    lines = [
+        '✅ <b>Очистка диска завершена</b>',
+        '',
+        f'Освобождено: <b>{escape_html(_format_mb_gb(freed))}</b>',
+        '',
+        _storage_text('/'),
+    ]
+    if details:
+        lines.extend(['', '<b>Отчёт:</b>', f'<code>{escape_html(details[-2500:])}</code>'])
+    await query.edit_message_text(
+        '\n'.join(lines),
+        reply_markup=back_main_keyboard('settings_menu', 'menu'),
+        parse_mode='HTML',
+    )
+
+
 async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -96,26 +191,6 @@ async def show_traffic_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await query.edit_message_text(
         text,
         reply_markup=traffic_keyboard(settings),
-        parse_mode='HTML',
-    )
-
-
-async def show_storage_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    storage = get_storage_summary('/')
-    text = (
-        '💾 <b>Хранилище сервера</b>\n\n'
-        f'Точка монтирования: <b>{storage["path"]}</b>\n'
-        f'Устройство: <b>{storage["device"]}</b>\n'
-        f'Файловая система: <b>{storage["fs_type"]}</b>\n\n'
-        f'• Занято: <b>{storage["used_human"]}</b> ({storage["used_percent"]:.1f}%)\n'
-        f'• Свободно: <b>{storage["free_human"]}</b> ({storage["free_percent"]:.1f}%)\n'
-        f'• Всего: <b>{storage["total_human"]}</b> (100%)'
-    )
-    await query.edit_message_text(
-        text,
-        reply_markup=back_main_keyboard('settings_menu', 'menu'),
         parse_mode='HTML',
     )
 
@@ -160,7 +235,13 @@ async def handle_settings_callback(update: Update, context: ContextTypes.DEFAULT
         await show_traffic_menu(update, context)
         return True
     if data == 'storage_info':
-        await show_storage_info(update, context)
+        await _show_storage_info(update, context)
+        return True
+    if data == 'disk_cleanup_confirm':
+        await _show_disk_cleanup_confirm(update, context)
+        return True
+    if data == 'disk_cleanup_run':
+        await _perform_disk_cleanup(update, context)
         return True
 
     if data == 'set_cpu_threshold':
