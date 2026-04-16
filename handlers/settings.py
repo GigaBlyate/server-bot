@@ -11,7 +11,7 @@ from telegram.ext import ContextTypes
 from core.db import get_all_settings, get_setting, set_setting
 from core.scheduler import schedule_daily_report_job
 from security import safe_run_command, validate_google_drive_id
-from services.system_info import find_manual_service_candidate, get_service_scan_snapshot
+from services.system_info import find_manual_service_candidate, get_service_scan_snapshot, get_storage_summary
 from services.traffic_quota import (
     get_quota_summary_text,
     get_quota_status,
@@ -100,6 +100,26 @@ async def show_traffic_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
 
 
+async def show_storage_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    storage = get_storage_summary('/')
+    text = (
+        '💾 <b>Хранилище сервера</b>\n\n'
+        f'Точка монтирования: <b>{storage["path"]}</b>\n'
+        f'Устройство: <b>{storage["device"]}</b>\n'
+        f'Файловая система: <b>{storage["fs_type"]}</b>\n\n'
+        f'• Занято: <b>{storage["used_human"]}</b> ({storage["used_percent"]:.1f}%)\n'
+        f'• Свободно: <b>{storage["free_human"]}</b> ({storage["free_percent"]:.1f}%)\n'
+        f'• Всего: <b>{storage["total_human"]}</b> (100%)'
+    )
+    await query.edit_message_text(
+        text,
+        reply_markup=back_main_keyboard('settings_menu', 'menu'),
+        parse_mode='HTML',
+    )
+
+
 async def _show_service_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> None:
     query = update.callback_query
     snapshot = await get_service_scan_snapshot(context.application.bot_data, force=force)
@@ -138,6 +158,9 @@ async def handle_settings_callback(update: Update, context: ContextTypes.DEFAULT
         return True
     if data == 'traffic_menu':
         await show_traffic_menu(update, context)
+        return True
+    if data == 'storage_info':
+        await show_storage_info(update, context)
         return True
 
     if data == 'set_cpu_threshold':
