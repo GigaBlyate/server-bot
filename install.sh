@@ -522,6 +522,52 @@ case "$ACTION" in
     /usr/bin/apt-get update
     exec /usr/bin/apt-get install --only-upgrade -y prosody
     ;;
+  cleanup-disk-safe)
+    threshold_days="${1:-180}"
+    [[ "$threshold_days" =~ ^[0-9]+$ ]] || { echo "threshold_days must be integer" >&2; exit 2; }
+
+    before_kb="$(/bin/df -Pk / | /usr/bin/awk 'NR==2 {print $4}')"
+    tmp_deleted=0
+    cache_deleted=0
+    log_deleted=0
+    crash_deleted=0
+
+    /usr/bin/apt-get clean >/dev/null 2>&1 || true
+    /usr/bin/apt-get autoclean -y >/dev/null 2>&1 || true
+    /usr/bin/journalctl --vacuum-time="${threshold_days}d" >/dev/null 2>&1 || true
+
+    while IFS= read -r -d '' file; do
+      /bin/rm -f -- "$file" && tmp_deleted=$((tmp_deleted + 1))
+    done < <(/usr/bin/find /tmp /var/tmp -xdev -type f -mtime +14 -print0 2>/dev/null)
+
+    while IFS= read -r -d '' dir; do
+      /bin/rmdir --ignore-fail-on-non-empty -- "$dir" >/dev/null 2>&1 || true
+    done < <(/usr/bin/find /tmp /var/tmp -xdev -depth -type d -empty -mtime +14 -print0 2>/dev/null)
+
+    while IFS= read -r -d '' file; do
+      /bin/rm -f -- "$file" && cache_deleted=$((cache_deleted + 1))
+    done < <(/usr/bin/find /var/cache -xdev -type f -mtime +"$threshold_days" \( -name '*.tmp' -o -name '*.temp' -o -name '*.old' -o -name '*.bak' -o -name '*.cache' \) -print0 2>/dev/null)
+
+    while IFS= read -r -d '' file; do
+      /bin/rm -f -- "$file" && log_deleted=$((log_deleted + 1))
+    done < <(/usr/bin/find /var/log -xdev -type f -mtime +"$threshold_days" \( -name '*.gz' -o -name '*.old' -o -name '*.log.*' -o -regex '.*/[^/]+\.[0-9]+' \) -print0 2>/dev/null)
+
+    while IFS= read -r -d '' file; do
+      /bin/rm -f -- "$file" && crash_deleted=$((crash_deleted + 1))
+    done < <(/usr/bin/find /var/crash -xdev -type f -mtime +"$threshold_days" -print0 2>/dev/null)
+
+    after_kb="$(/bin/df -Pk / | /usr/bin/awk 'NR==2 {print $4}')"
+    freed_kb=$((after_kb - before_kb))
+    if [ "$freed_kb" -lt 0 ]; then
+      freed_kb=0
+    fi
+
+    printf 'tmp_files_deleted=%s\n' "$tmp_deleted"
+    printf 'cache_files_deleted=%s\n' "$cache_deleted"
+    printf 'old_logs_deleted=%s\n' "$log_deleted"
+    printf 'crash_files_deleted=%s\n' "$crash_deleted"
+    printf 'freed_kb=%s\n' "$freed_kb"
+    ;;
   prosody-domains)
     exec /bin/bash -lc 'shopt -s nullglob; awk '\''/^[[:space:]]*VirtualHost[[:space:]]*"/ { if (match($0, /"[^"]+"/)) { v=substr($0, RSTART+1, RLENGTH-2); print v } }'\'' /etc/prosody/prosody.cfg.lua /etc/prosody/conf.d/*.cfg.lua 2>/dev/null | sort -u'
     ;;
