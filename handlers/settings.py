@@ -19,11 +19,14 @@ from services.fail2ban_service import (
     fail2ban_monitor_job,
     fail2ban_unban_ip,
     format_fail2ban_bans_text,
+    format_fail2ban_config_text,
     format_fail2ban_menu_text,
+    get_fail2ban_config_snapshot,
     get_fail2ban_snapshot,
     is_fail2ban_installed,
     parse_fail2ban_target,
     run_fail2ban_service_action,
+    set_fail2ban_config_value,
 )
 from services.system_info import find_manual_service_candidate, get_service_scan_snapshot
 from services.traffic_quota import (
@@ -34,6 +37,7 @@ from services.traffic_quota import (
 )
 from ui.keyboards import (
     back_main_keyboard,
+    fail2ban_config_keyboard,
     fail2ban_keyboard,
     service_monitor_keyboard,
     settings_keyboard,
@@ -101,6 +105,80 @@ def _storage_text(path: str = '/') -> str:
 def _root_helper(*args: str) -> list[str]:
     return ['sudo', config.ROOT_HELPER, *args]
 
+
+FAIL2BAN_CONFIG_FIELDS = {
+    'fail2ban_cfg_bantime': {
+        'section': 'DEFAULT',
+        'option': 'bantime',
+        'title': '⏳ Bantime',
+        'hint': 'Введите новое значение для <code>bantime</code>. Примеры: <code>10m</code>, <code>1h</code>, <code>86400</code>.',
+    },
+    'fail2ban_cfg_findtime': {
+        'section': 'DEFAULT',
+        'option': 'findtime',
+        'title': '🕒 Findtime',
+        'hint': 'Введите новое значение для <code>findtime</code>. Примеры: <code>10m</code>, <code>1h</code>, <code>600</code>.',
+    },
+    'fail2ban_cfg_maxretry': {
+        'section': 'DEFAULT',
+        'option': 'maxretry',
+        'title': '🔁 Maxretry',
+        'hint': 'Введите число попыток до бана. Пример: <code>5</code>.',
+    },
+    'fail2ban_cfg_ignoreip': {
+        'section': 'DEFAULT',
+        'option': 'ignoreip',
+        'title': '🧾 IgnoreIP',
+        'hint': 'Введите список IP/CIDR через пробел. Пример: <code>127.0.0.1/8 ::1 1.2.3.4/32</code>.',
+    },
+    'fail2ban_cfg_sshd_port': {
+        'section': 'sshd',
+        'option': 'port',
+        'title': '🚪 SSH port',
+        'hint': 'Введите порт или список портов для jail <code>sshd</code>. Примеры: <code>ssh</code>, <code>22</code>, <code>22,2222</code>.',
+    },
+    'fail2ban_cfg_sshd_logpath': {
+        'section': 'sshd',
+        'option': 'logpath',
+        'title': '📄 SSH logpath',
+        'hint': 'Введите путь к логам jail <code>sshd</code>. Примеры: <code>%(sshd_log)s</code> или <code>/var/log/auth.log</code>.',
+    },
+}
+
+
+def _normalize_fail2ban_input(value: str, awaiting: str) -> str:
+    cleaned = (value or '').strip()
+    if not cleaned or '\n' in cleaned or '\r' in cleaned:
+        raise ValueError
+    if len(cleaned) > 400:
+        raise ValueError
+    if awaiting == 'fail2ban_cfg_maxretry':
+        number = int(cleaned)
+        if number <= 0 or number > 1000:
+            raise ValueError
+        return str(number)
+    return cleaned
+
+def _parse_fail2ban_custom_update(text: str) -> tuple[str, str, str]:
+    raw = (text or '').strip()
+    if not raw or '\n' in raw or '\r' in raw:
+        raise ValueError
+    if '=' in raw:
+        left, value = raw.split('=', 1)
+        value = value.strip()
+    else:
+        parts = raw.split(None, 2)
+        if len(parts) < 3:
+            raise ValueError
+        left = f'{parts[0]} {parts[1]}'
+        value = parts[2].strip()
+    left_parts = left.strip().split(None, 1)
+    if len(left_parts) != 2:
+        raise ValueError
+    section, option = left_parts[0].strip(), left_parts[1].strip()
+    if not section or not option or not value:
+        raise ValueError
+    return section, option, value
 
 async def _show_storage_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -268,6 +346,20 @@ async def _show_fail2ban_ban_list(update: Update, context: ContextTypes.DEFAULT_
         parse_mode='HTML',
     )
 
+
+async def _show_fail2ban_config_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, notice: str | None = None) -> None:
+    query = update.callback_query
+    snapshot = await get_fail2ban_config_snapshot(context.application.bot_data, force=True)
+    text = format_fail2ban_config_text(snapshot)
+    if notice:
+        text += f'\n\nℹ️ {notice}'
+    sshd_enabled = str(((snapshot.get('sections') or {}).get('sshd') or {}).get('enabled', '')).strip().lower() in {'1', 'true', 'yes', 'on'}
+    await query.edit_message_text(
+        text,
+        reply_markup=fail2ban_config_keyboard(installed=bool(snapshot.get('installed')), sshd_enabled=sshd_enabled),
+        parse_mode='HTML',
+    )
+
 async def handle_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> bool:
     query = update.callback_query
 
@@ -304,6 +396,51 @@ async def handle_settings_callback(update: Update, context: ContextTypes.DEFAULT
     if data == 'fail2ban_bans':
         await query.answer()
         await _show_fail2ban_ban_list(update, context)
+        return True
+
+
+    if data == 'fail2ban_config_menu':
+        await query.answer()
+        await _show_fail2ban_config_menu(update, context)
+        return True
+
+    if data == 'fail2ban_config_refresh':
+        await query.answer('Обновляю конфиг...')
+        await _show_fail2ban_config_menu(update, context)
+        return True
+
+    if data == 'fail2ban_config_toggle_sshd':
+        snapshot = await get_fail2ban_config_snapshot(context.application.bot_data, force=True)
+        current = str(((snapshot.get('sections') or {}).get('sshd') or {}).get('enabled', '')).strip().lower() in {'1', 'true', 'yes', 'on'}
+        ok, message = await set_fail2ban_config_value('sshd', 'enabled', 'false' if current else 'true', context.application.bot_data)
+        await _show_fail2ban_config_menu(update, context, notice=message if ok else f'Ошибка: {message}')
+        return True
+
+    if data in FAIL2BAN_CONFIG_FIELDS:
+        meta = FAIL2BAN_CONFIG_FIELDS[data]
+        context.user_data['awaiting_settings_input'] = data
+        await query.answer()
+        await query.edit_message_text(
+            f"{meta['title']}\n\n{meta['hint']}\n\nИзменение будет записано в <code>/etc/fail2ban/jail.local</code> с backup и проверкой перезапуска Fail2Ban.",
+            reply_markup=back_main_keyboard('fail2ban_config_menu', 'menu'),
+            parse_mode='HTML',
+        )
+        return True
+
+    if data == 'fail2ban_cfg_custom':
+        context.user_data['awaiting_settings_input'] = 'fail2ban_cfg_custom'
+        await query.answer()
+        await query.edit_message_text(
+            '✍️ <b>Произвольный параметр Fail2Ban</b>\n\n'
+            'Введите в формате <code>section option = value</code>.\n'
+            'Примеры:\n'
+            '• <code>DEFAULT bantime = 1h</code>\n'
+            '• <code>sshd enabled = true</code>\n'
+            '• <code>nginx-http-auth maxretry = 3</code>\n\n'
+            'Изменение будет записано в <code>/etc/fail2ban/jail.local</code> с backup и проверкой перезапуска Fail2Ban.',
+            reply_markup=back_main_keyboard('fail2ban_config_menu', 'menu'),
+            parse_mode='HTML',
+        )
         return True
 
     if data == 'fail2ban_toggle_alerts':
@@ -633,13 +770,37 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 reply_markup=back_main_keyboard('fail2ban_menu', 'menu'),
             )
 
+        elif awaiting in FAIL2BAN_CONFIG_FIELDS or awaiting == 'fail2ban_cfg_custom':
+            if awaiting == 'fail2ban_cfg_custom':
+                section, option, value = _parse_fail2ban_custom_update(text)
+            else:
+                meta = FAIL2BAN_CONFIG_FIELDS[awaiting]
+                section = meta['section']
+                option = meta['option']
+                value = _normalize_fail2ban_input(text, awaiting)
+            ok, message = await set_fail2ban_config_value(section, option, value, context.application.bot_data)
+            prefix = '✅' if ok else '❌'
+            await update.message.reply_text(
+                f'{prefix} {message}',
+                reply_markup=back_main_keyboard('fail2ban_config_menu', 'menu'),
+            )
+
         else:
             return False
 
     except Exception:
+        error_back_target = 'settings_menu'
+        if awaiting in ('fail2ban_ban', 'fail2ban_unban'):
+            error_back_target = 'fail2ban_menu'
+        elif awaiting in FAIL2BAN_CONFIG_FIELDS or awaiting == 'fail2ban_cfg_custom':
+            error_back_target = 'fail2ban_config_menu'
+        elif awaiting and str(awaiting).startswith('traffic_'):
+            error_back_target = 'traffic_menu'
+        elif awaiting and str(awaiting).startswith('service_'):
+            error_back_target = 'service_monitor_menu'
         await update.message.reply_text(
             '❌ Некорректное значение. Попробуйте ещё раз или вернитесь назад.',
-            reply_markup=back_main_keyboard('settings_menu', 'menu'),
+            reply_markup=back_main_keyboard(error_back_target, 'menu'),
         )
         return True
 
