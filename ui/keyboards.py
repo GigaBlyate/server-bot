@@ -465,6 +465,7 @@ def fail2ban_keyboard(installed: bool, active: bool, alerts_enabled: bool) -> In
                 ],
                 [InlineKeyboardButton('⏹ Stop', callback_data='fail2ban_stop')],
                 [InlineKeyboardButton('🚫 Бан-лист', callback_data='fail2ban_bans')],
+                [InlineKeyboardButton('⚙️ Конфиг', callback_data='fail2ban_config_menu')],
                 [
                     InlineKeyboardButton('⛔ Забанить IP', callback_data='fail2ban_prompt_ban'),
                     InlineKeyboardButton('♻️ Разбанить IP', callback_data='fail2ban_prompt_unban'),
@@ -476,4 +477,38 @@ def fail2ban_keyboard(installed: bool, active: bool, alerts_enabled: bool) -> In
         InlineKeyboardButton('◀️ Назад', callback_data='settings_menu'),
         InlineKeyboardButton('🏠 Главное меню', callback_data='menu'),
     ])
+    return InlineKeyboardMarkup(keyboard)
+
+
+
+def fail2ban_config_keyboard(installed: bool, sshd_enabled: bool) -> InlineKeyboardMarkup:
+    if not installed:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton('◀️ Назад', callback_data='fail2ban_menu'), InlineKeyboardButton('🏠 Главное меню', callback_data='menu')],
+        ])
+
+    sshd_label = f'SSHD: {"✅ включён" if sshd_enabled else "❌ выключен"}'
+    keyboard: List[List[InlineKeyboardButton]] = [
+        [InlineKeyboardButton('🔄 Обновить', callback_data='fail2ban_config_refresh')],
+        [
+            InlineKeyboardButton('⏳ Bantime', callback_data='fail2ban_cfg_bantime'),
+            InlineKeyboardButton('🕒 Findtime', callback_data='fail2ban_cfg_findtime'),
+        ],
+        [
+            InlineKeyboardButton('🔁 Maxretry', callback_data='fail2ban_cfg_maxretry'),
+            InlineKeyboardButton('🧾 IgnoreIP', callback_data='fail2ban_cfg_ignoreip'),
+        ],
+        [
+            InlineKeyboardButton(sshd_label, callback_data='fail2ban_config_toggle_sshd'),
+            InlineKeyboardButton('🚪 SSH port', callback_data='fail2ban_cfg_sshd_port'),
+        ],
+        [
+            InlineKeyboardButton('📄 SSH logpath', callback_data='fail2ban_cfg_sshd_logpath'),
+            InlineKeyboardButton('✍️ Любой параметр', callback_data='fail2ban_cfg_custom'),
+        ],
+        [
+            InlineKeyboardButton('◀️ Назад', callback_data='fail2ban_menu'),
+            InlineKeyboardButton('🏠 Главное меню', callback_data='menu'),
+        ],
+    ]
     return InlineKeyboardMarkup(keyboard)
