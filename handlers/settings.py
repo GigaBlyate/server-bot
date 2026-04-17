@@ -4,15 +4,25 @@
 import json
 from datetime import date
 
+
 import config
-import psutil
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from core.db import get_all_settings, get_setting, set_setting
-from core.formatting import escape_html
 from core.scheduler import schedule_daily_report_job
 from security import safe_run_command, validate_google_drive_id
+from services.fail2ban_service import (
+    fail2ban_ban_ip,
+    fail2ban_monitor_job,
+    fail2ban_unban_ip,
+    format_fail2ban_bans_text,
+    format_fail2ban_menu_text,
+    get_fail2ban_snapshot,
+    is_fail2ban_installed,
+    parse_fail2ban_target,
+    run_fail2ban_service_action,
+)
 from services.system_info import find_manual_service_candidate, get_service_scan_snapshot
 from services.traffic_quota import (
     get_quota_summary_text,
@@ -22,6 +32,7 @@ from services.traffic_quota import (
 )
 from ui.keyboards import (
     back_main_keyboard,
+    fail2ban_keyboard,
     service_monitor_keyboard,
     settings_keyboard,
     traffic_keyboard,
@@ -66,103 +77,11 @@ def _parse_human_bytes(text: str) -> int:
     return int(float(src) * 1024 ** 3)
 
 
-def _format_mb_gb(bytes_value: int | float) -> str:
-    size = max(0.0, float(bytes_value))
-    mb = size / (1024 ** 2)
-    gb = size / (1024 ** 3)
-    return f'{mb:,.1f} MB / {gb:,.2f} GB'.replace(',', ' ')
-
-
-def _storage_text(path: str = '/') -> str:
-    usage = psutil.disk_usage(path)
-    free_percent = max(0.0, 100.0 - float(usage.percent))
-    return (
-        '💾 <b>Хранилище сервера</b>\n\n'
-        f'Точка монтирования: <code>{path}</code>\n'
-        f'• Занято: <b>{_format_mb_gb(usage.used)}</b> ({usage.percent:.1f}%)\n'
-        f'• Свободно: <b>{_format_mb_gb(usage.free)}</b> ({free_percent:.1f}%)\n'
-        f'• Всего: <b>{_format_mb_gb(usage.total)}</b> (100%)'
-    )
-
-
-def _root_helper(*args: str) -> list[str]:
-    return ['sudo', config.ROOT_HELPER, *args]
-
-
-async def _show_storage_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text(
-        _storage_text('/'),
-        reply_markup=back_main_keyboard('settings_menu', 'menu'),
-        parse_mode='HTML',
-    )
-
-
-async def _show_disk_cleanup_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    text = (
-        '🧹 <b>Безопасная очистка диска</b>\n\n'
-        'Будут удалены только безопасные категории мусора:\n'
-        '• временные файлы в <code>/tmp</code> и <code>/var/tmp</code> старше 14 дней;\n'
-        '• старые журналы systemd старше 180 дней;\n'
-        '• старые ротированные логи в <code>/var/log</code> старше 180 дней;\n'
-        '• старые crash dump файлы старше 180 дней;\n'
-        '• кэш пакетов APT.\n\n'
-        'Не удаляются:\n'
-        '• проекты, базы данных, конфиги, docker-данные;\n'
-        '• домашние каталоги и пользовательские файлы;\n'
-        '• активные текущие логи.\n\n'
-        'Запустить безопасную очистку сейчас?'
-    )
-    from ui.keyboards import confirm_keyboard
-    await query.edit_message_text(
-        text,
-        reply_markup=confirm_keyboard('disk_cleanup_run', 'settings_menu'),
-        parse_mode='HTML',
-    )
-
-
-async def _perform_disk_cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    before = psutil.disk_usage('/')
-    await query.edit_message_text('⏳ Выполняю безопасную очистку диска...', parse_mode='HTML')
-    code, out, err = await safe_run_command(_root_helper('cleanup-disk-safe', '180'), timeout=1200)
-    after = psutil.disk_usage('/')
-    freed = max(0, int(after.free) - int(before.free))
-
-    details = (out or err or '').strip()
-    if code != 0:
-        await query.edit_message_text(
-            '❌ <b>Очистка диска завершилась с ошибкой</b>\n\n'
-            f'<code>{escape_html(details[-3000:] or "Неизвестная ошибка")}</code>',
-            reply_markup=back_main_keyboard('settings_menu', 'menu'),
-            parse_mode='HTML',
-        )
-        return
-
-    lines = [
-        '✅ <b>Очистка диска завершена</b>',
-        '',
-        f'Освобождено: <b>{escape_html(_format_mb_gb(freed))}</b>',
-        '',
-        _storage_text('/'),
-    ]
-    if details:
-        lines.extend(['', '<b>Отчёт:</b>', f'<code>{escape_html(details[-2500:])}</code>'])
-    await query.edit_message_text(
-        '\n'.join(lines),
-        reply_markup=back_main_keyboard('settings_menu', 'menu'),
-        parse_mode='HTML',
-    )
-
-
 async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     settings = get_all_settings()
+    fail2ban_available = await is_fail2ban_installed(context.application.bot_data)
     text = (
         '⚙️ <b>Настройки</b>\n\n'
         'Здесь собраны только полезные рабочие параметры: пороги, отчёт, '
@@ -171,7 +90,7 @@ async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
     await query.edit_message_text(
         text,
-        reply_markup=settings_keyboard(settings),
+        reply_markup=settings_keyboard(settings, fail2ban_available=fail2ban_available),
         parse_mode='HTML',
     )
 
@@ -225,6 +144,35 @@ async def _show_service_monitor(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
 
+
+
+async def _show_fail2ban_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, notice: str | None = None) -> None:
+    query = update.callback_query
+    snapshot = await get_fail2ban_snapshot(context.application.bot_data, force=True)
+    alerts_enabled = get_setting('fail2ban_alerts_enabled', 'true') == 'true'
+    text = format_fail2ban_menu_text(snapshot, alerts_enabled)
+    if notice:
+        text += f'\n\nℹ️ {notice}'
+    await query.edit_message_text(
+        text,
+        reply_markup=fail2ban_keyboard(
+            installed=bool(snapshot.get('installed')),
+            active=bool(snapshot.get('active')),
+            alerts_enabled=alerts_enabled,
+        ),
+        parse_mode='HTML',
+    )
+
+
+async def _show_fail2ban_ban_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    snapshot = await get_fail2ban_snapshot(context.application.bot_data, force=True)
+    await query.edit_message_text(
+        format_fail2ban_bans_text(snapshot),
+        reply_markup=back_main_keyboard('fail2ban_menu', 'menu'),
+        parse_mode='HTML',
+    )
+
 async def handle_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str) -> bool:
     query = update.callback_query
 
@@ -234,14 +182,72 @@ async def handle_settings_callback(update: Update, context: ContextTypes.DEFAULT
     if data == 'traffic_menu':
         await show_traffic_menu(update, context)
         return True
-    if data == 'storage_info':
-        await _show_storage_info(update, context)
+
+    if data == 'fail2ban_unavailable':
+        await query.answer('Fail2Ban не установлен на сервере.', show_alert=True)
         return True
-    if data == 'disk_cleanup_confirm':
-        await _show_disk_cleanup_confirm(update, context)
+
+    if data == 'fail2ban_menu':
+        await query.answer()
+        await _show_fail2ban_menu(update, context)
         return True
-    if data == 'disk_cleanup_run':
-        await _perform_disk_cleanup(update, context)
+
+    if data == 'fail2ban_refresh':
+        await query.answer('Обновляю статус...')
+        await _show_fail2ban_menu(update, context)
+        return True
+
+    if data == 'fail2ban_bans':
+        await query.answer()
+        await _show_fail2ban_ban_list(update, context)
+        return True
+
+    if data == 'fail2ban_toggle_alerts':
+        current = get_setting('fail2ban_alerts_enabled', 'true') == 'true'
+        set_setting('fail2ban_alerts_enabled', 'false' if current else 'true')
+        await query.answer('Уведомления выключены' if current else 'Уведомления включены')
+        await _show_fail2ban_menu(update, context)
+        return True
+
+    if data in {'fail2ban_start', 'fail2ban_stop', 'fail2ban_restart'}:
+        action = data.replace('fail2ban_', '')
+        await query.answer(f'Выполняю: {action}')
+        ok, message = await run_fail2ban_service_action(action, context.application.bot_data)
+        await _show_fail2ban_menu(update, context, notice=message if ok else f'Ошибка: {message}')
+        return True
+
+    if data == 'fail2ban_prompt_ban':
+        snapshot = await get_fail2ban_snapshot(context.application.bot_data, force=True)
+        if not snapshot.get('installed'):
+            await query.answer('Fail2Ban не установлен.', show_alert=True)
+            return True
+        context.user_data['awaiting_settings_input'] = 'fail2ban_ban'
+        hint = 'Введите <code>jail IP</code>. Пример: <code>sshd 1.2.3.4</code>.'
+        if len(snapshot.get('jails') or []) == 1:
+            hint += f"\nМожно просто IP: <code>1.2.3.4</code>, jail будет <code>{snapshot['jails'][0]}</code>."
+        await query.answer()
+        await query.edit_message_text(
+            '⛔ <b>Забанить IP через Fail2Ban</b>\n\n' + hint,
+            reply_markup=back_main_keyboard('fail2ban_menu', 'menu'),
+            parse_mode='HTML',
+        )
+        return True
+
+    if data == 'fail2ban_prompt_unban':
+        snapshot = await get_fail2ban_snapshot(context.application.bot_data, force=True)
+        if not snapshot.get('installed'):
+            await query.answer('Fail2Ban не установлен.', show_alert=True)
+            return True
+        context.user_data['awaiting_settings_input'] = 'fail2ban_unban'
+        hint = 'Введите <code>jail IP</code>. Пример: <code>sshd 1.2.3.4</code>.'
+        if len(snapshot.get('jails') or []) == 1:
+            hint += f"\nМожно просто IP: <code>1.2.3.4</code>, jail будет <code>{snapshot['jails'][0]}</code>."
+        await query.answer()
+        await query.edit_message_text(
+            '♻️ <b>Разбанить IP через Fail2Ban</b>\n\n' + hint,
+            reply_markup=back_main_keyboard('fail2ban_menu', 'menu'),
+            parse_mode='HTML',
+        )
         return True
 
     if data == 'set_cpu_threshold':
@@ -508,6 +514,19 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await update.message.reply_text(
                 f"✅ Добавлено: {item.get('label') or _humanize(item.get('name', 'service'))}",
                 reply_markup=back_main_keyboard('service_monitor_menu', 'menu'),
+            )
+
+        elif awaiting in ('fail2ban_ban', 'fail2ban_unban'):
+            snapshot = await get_fail2ban_snapshot(context.application.bot_data, force=True)
+            jail, ip = parse_fail2ban_target(text, list(snapshot.get('jails') or []))
+            if awaiting == 'fail2ban_ban':
+                ok, message = await fail2ban_ban_ip(jail, ip, context.application.bot_data)
+            else:
+                ok, message = await fail2ban_unban_ip(jail, ip, context.application.bot_data)
+            prefix = '✅' if ok else '❌'
+            await update.message.reply_text(
+                f'{prefix} {message}',
+                reply_markup=back_main_keyboard('fail2ban_menu', 'menu'),
             )
 
         else:
