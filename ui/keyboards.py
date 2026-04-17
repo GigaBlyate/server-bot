@@ -86,6 +86,8 @@ def settings_keyboard(settings: Dict[str, str], fail2ban_available: bool = False
                 f'SSD порог: {settings.get("disk_threshold", "90")}% ',
                 callback_data='set_disk_threshold',
             )],
+            [InlineKeyboardButton('💾 Хранилище', callback_data='storage_info')],
+            [InlineKeyboardButton('🧹 Очистка диска', callback_data='disk_cleanup_confirm')],
             [InlineKeyboardButton(
                 f'Ежедневный отчёт: {report}',
                 callback_data='toggle_daily_report',
