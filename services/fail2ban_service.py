@@ -17,6 +17,7 @@ from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
 FAIL2BAN_CACHE_TTL = 20
+FAIL2BAN_CONFIG_CACHE_TTL = 15
 
 
 def _root_helper(*args: str) -> List[str]:
@@ -214,6 +215,140 @@ async def fail2ban_unban_ip(jail: str, ip: str, bot_data: Dict[str, Any] | None 
         return True, raw or f'IP {ip} разбанен в {jail}.'
     return False, raw or f'Не удалось разбанить IP {ip}.'
 
+
+
+
+async def get_fail2ban_config_snapshot(bot_data: Dict[str, Any] | None = None, force: bool = False) -> Dict[str, Any]:
+    now = time.time()
+    cache = (bot_data or {}).get('fail2ban_config_snapshot') if bot_data is not None else None
+    if cache and not force and now - float(cache.get('cached_at', 0)) < FAIL2BAN_CONFIG_CACHE_TTL:
+        return dict(cache.get('data') or {})
+
+    installed = await is_fail2ban_installed(bot_data, force=force)
+    empty = {
+        'installed': installed,
+        'path': '/etc/fail2ban/jail.local',
+        'exists': False,
+        'available_sections': [],
+        'sections': {'DEFAULT': {}, 'sshd': {}},
+        'error': '',
+    }
+    if not installed:
+        if bot_data is not None:
+            bot_data['fail2ban_config_snapshot'] = {'cached_at': now, 'data': empty}
+        return empty
+
+    code, out, err = await safe_run_command(_root_helper('fail2ban-config-json'), timeout=25)
+    raw = (out or err or '').strip()
+    if code != 0:
+        data = dict(empty)
+        data['error'] = raw or 'Не удалось получить конфигурацию Fail2Ban.'
+    else:
+        try:
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                raise ValueError('invalid payload')
+        except Exception:
+            data = dict(empty)
+            data['error'] = raw or 'Неверный ответ от редактора конфигурации.'
+
+    data.setdefault('installed', installed)
+    data.setdefault('path', '/etc/fail2ban/jail.local')
+    data.setdefault('exists', False)
+    data.setdefault('available_sections', [])
+    data.setdefault('sections', {'DEFAULT': {}, 'sshd': {}})
+    data.setdefault('error', '')
+    sections = data.get('sections') or {}
+    if not isinstance(sections, dict):
+        sections = {}
+    normalized_sections: Dict[str, Dict[str, str]] = {}
+    for section_name, values in sections.items():
+        if not isinstance(values, dict):
+            continue
+        normalized_sections[str(section_name)] = {
+            str(k): str(v) for k, v in values.items() if str(v).strip() != ''
+        }
+    normalized_sections.setdefault('DEFAULT', {})
+    normalized_sections.setdefault('sshd', {})
+    data['sections'] = normalized_sections
+    data['available_sections'] = [str(item) for item in (data.get('available_sections') or []) if str(item).strip()]
+
+    if bot_data is not None:
+        bot_data['fail2ban_config_snapshot'] = {'cached_at': now, 'data': data}
+    return data
+
+
+def _cfg_value(data: Dict[str, Any], section: str, option: str) -> str:
+    return str((((data.get('sections') or {}).get(section) or {}).get(option, '')) or '').strip()
+
+
+def format_fail2ban_config_text(config_data: Dict[str, Any]) -> str:
+    if not config_data.get('installed'):
+        return '⚙️ <b>Редактор конфигурации Fail2Ban</b>\n\nFail2Ban не установлен.'
+
+    def show(section: str, option: str, fallback: str = 'не задано') -> str:
+        value = _cfg_value(config_data, section, option)
+        return escape_html(value or fallback)
+
+    sshd_enabled_raw = _cfg_value(config_data, 'sshd', 'enabled').lower()
+    sshd_enabled = sshd_enabled_raw in {'1', 'true', 'yes', 'on'}
+    enabled_text = 'true' if sshd_enabled else (_cfg_value(config_data, 'sshd', 'enabled') or 'не задано')
+    lines = [
+        '⚙️ <b>Редактор конфигурации Fail2Ban</b>',
+        '',
+        f'Файл для записи: <code>{escape_html(str(config_data.get("path") or "/etc/fail2ban/jail.local"))}</code>',
+        f'Локальный override: <b>{"есть" if config_data.get("exists") else "ещё не создан"}</b>',
+        'Каждое изменение сохраняется в <code>jail.local</code> с backup и проверкой перезапуска сервиса.',
+        '',
+        '<b>[DEFAULT]</b>',
+        f'• bantime: <code>{show("DEFAULT", "bantime")}</code>',
+        f'• findtime: <code>{show("DEFAULT", "findtime")}</code>',
+        f'• maxretry: <code>{show("DEFAULT", "maxretry")}</code>',
+        f'• ignoreip: <code>{show("DEFAULT", "ignoreip")}</code>',
+        '',
+        '<b>[sshd]</b>',
+        f'• enabled: <code>{escape_html(enabled_text)}</code>',
+        f'• port: <code>{show("sshd", "port")}</code>',
+        f'• logpath: <code>{show("sshd", "logpath")}</code>',
+    ]
+    sections = list(config_data.get('available_sections') or [])
+    if sections:
+        lines.extend(['', 'Разделы: ' + ', '.join(escape_html(section) for section in sections[:12])])
+        if len(sections) > 12:
+            lines.append(f'… ещё {len(sections) - 12}')
+    if config_data.get('error'):
+        lines.extend(['', f'⚠️ {escape_html(str(config_data["error"]))}'])
+    return '\n'.join(lines)
+
+async def set_fail2ban_config_value(
+    section: str,
+    option: str,
+    value: str,
+    bot_data: Dict[str, Any] | None = None,
+) -> Tuple[bool, str]:
+    section = str(section or '').strip()
+    option = str(option or '').strip().lower()
+    value = str(value or '').strip()
+    if not section or not option or not value:
+        return False, 'Нужно указать раздел, параметр и значение.'
+
+    code, out, err = await safe_run_command(_root_helper('fail2ban-config-set', section, option, value), timeout=40)
+    if bot_data is not None:
+        bot_data.pop('fail2ban_snapshot', None)
+        bot_data.pop('fail2ban_config_snapshot', None)
+        bot_data.pop('fail2ban_installed_cache', None)
+    raw = (out or err or '').strip()
+    if code != 0:
+        return False, raw or 'Не удалось сохранить конфигурацию Fail2Ban.'
+    try:
+        payload = json.loads(raw)
+        if isinstance(payload, dict):
+            backup_path = str(payload.get('backup_path') or '').strip()
+            suffix = f' Backup: {backup_path}' if backup_path else ''
+            return True, f'Сохранено: [{section}] {option} = {value}.{suffix}'
+    except Exception:
+        pass
+    return True, raw or f'Сохранено: [{section}] {option} = {value}.'
 
 async def fail2ban_monitor_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     if get_setting('fail2ban_alerts_enabled', 'true') != 'true':
