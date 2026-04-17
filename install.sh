@@ -522,52 +522,6 @@ case "$ACTION" in
     /usr/bin/apt-get update
     exec /usr/bin/apt-get install --only-upgrade -y prosody
     ;;
-  cleanup-disk-safe)
-    threshold_days="${1:-180}"
-    [[ "$threshold_days" =~ ^[0-9]+$ ]] || { echo "threshold_days must be integer" >&2; exit 2; }
-
-    before_kb="$(/bin/df -Pk / | /usr/bin/awk 'NR==2 {print $4}')"
-    tmp_deleted=0
-    cache_deleted=0
-    log_deleted=0
-    crash_deleted=0
-
-    /usr/bin/apt-get clean >/dev/null 2>&1 || true
-    /usr/bin/apt-get autoclean -y >/dev/null 2>&1 || true
-    /usr/bin/journalctl --vacuum-time="${threshold_days}d" >/dev/null 2>&1 || true
-
-    while IFS= read -r -d '' file; do
-      /bin/rm -f -- "$file" && tmp_deleted=$((tmp_deleted + 1))
-    done < <(/usr/bin/find /tmp /var/tmp -xdev -type f -mtime +14 -print0 2>/dev/null)
-
-    while IFS= read -r -d '' dir; do
-      /bin/rmdir --ignore-fail-on-non-empty -- "$dir" >/dev/null 2>&1 || true
-    done < <(/usr/bin/find /tmp /var/tmp -xdev -depth -type d -empty -mtime +14 -print0 2>/dev/null)
-
-    while IFS= read -r -d '' file; do
-      /bin/rm -f -- "$file" && cache_deleted=$((cache_deleted + 1))
-    done < <(/usr/bin/find /var/cache -xdev -type f -mtime +"$threshold_days" \( -name '*.tmp' -o -name '*.temp' -o -name '*.old' -o -name '*.bak' -o -name '*.cache' \) -print0 2>/dev/null)
-
-    while IFS= read -r -d '' file; do
-      /bin/rm -f -- "$file" && log_deleted=$((log_deleted + 1))
-    done < <(/usr/bin/find /var/log -xdev -type f -mtime +"$threshold_days" \( -name '*.gz' -o -name '*.old' -o -name '*.log.*' -o -regex '.*/[^/]+\.[0-9]+' \) -print0 2>/dev/null)
-
-    while IFS= read -r -d '' file; do
-      /bin/rm -f -- "$file" && crash_deleted=$((crash_deleted + 1))
-    done < <(/usr/bin/find /var/crash -xdev -type f -mtime +"$threshold_days" -print0 2>/dev/null)
-
-    after_kb="$(/bin/df -Pk / | /usr/bin/awk 'NR==2 {print $4}')"
-    freed_kb=$((after_kb - before_kb))
-    if [ "$freed_kb" -lt 0 ]; then
-      freed_kb=0
-    fi
-
-    printf 'tmp_files_deleted=%s\n' "$tmp_deleted"
-    printf 'cache_files_deleted=%s\n' "$cache_deleted"
-    printf 'old_logs_deleted=%s\n' "$log_deleted"
-    printf 'crash_files_deleted=%s\n' "$crash_deleted"
-    printf 'freed_kb=%s\n' "$freed_kb"
-    ;;
   prosody-domains)
     exec /bin/bash -lc 'shopt -s nullglob; awk '\''/^[[:space:]]*VirtualHost[[:space:]]*"/ { if (match($0, /"[^"]+"/)) { v=substr($0, RSTART+1, RLENGTH-2); print v } }'\'' /etc/prosody/prosody.cfg.lua /etc/prosody/conf.d/*.cfg.lua 2>/dev/null | sort -u'
     ;;
@@ -599,6 +553,89 @@ case "$ACTION" in
     password="$(lua_escape "$password")"
     exec /usr/bin/prosodyctl shell "user:password(\"$jid\", \"$password\")"
     ;;
+  fail2ban-status-json)
+    exec /usr/bin/python3 - <<'PY'
+import json
+import os
+import re
+import shutil
+import subprocess
+
+def run(cmd):
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return proc.returncode, (proc.stdout or '').strip(), (proc.stderr or '').strip()
+
+installed = any([
+    shutil.which('fail2ban-client') is not None,
+    os.path.isdir('/etc/fail2ban'),
+    os.path.exists('/etc/systemd/system/fail2ban.service'),
+    os.path.exists('/lib/systemd/system/fail2ban.service'),
+])
+payload = {
+    'installed': installed,
+    'active': False,
+    'enabled': False,
+    'jails': [],
+    'bans': {},
+    'total_banned': 0,
+    'error': '',
+}
+if not installed:
+    print(json.dumps(payload, ensure_ascii=False))
+    raise SystemExit(0)
+
+_, out, err = run(['/usr/bin/systemctl', 'is-active', 'fail2ban'])
+payload['active'] = (out == 'active')
+_, out, err = run(['/usr/bin/systemctl', 'is-enabled', 'fail2ban'])
+payload['enabled'] = (out == 'enabled')
+
+if payload['active']:
+    code, out, err = run(['fail2ban-client', 'status'])
+    raw = out or err
+    if code != 0:
+        payload['error'] = raw or 'status failed'
+    else:
+        m = re.search(r'Jail list:\s*(.+)', raw)
+        if m:
+            payload['jails'] = [item.strip() for item in m.group(1).split(',') if item.strip()]
+        for jail in payload['jails']:
+            code, out, err = run(['fail2ban-client', 'status', jail])
+            txt = out or err
+            if code != 0:
+                continue
+            m_count = re.search(r'Currently banned:\s*(\d+)', txt)
+            if m_count:
+                payload['total_banned'] += int(m_count.group(1))
+            m_ips = re.search(r'Banned IP list:\s*(.*)', txt)
+            ips = m_ips.group(1).split() if m_ips else []
+            payload['bans'][jail] = ips
+
+print(json.dumps(payload, ensure_ascii=False))
+PY
+    ;;
+  fail2ban-service)
+    sub="${1:-status}"
+    case "$sub" in
+      start|stop|restart|status) ;;
+      *) echo "unsupported fail2ban service action: $sub" >&2; exit 64 ;;
+    esac
+    if [[ "$sub" == "status" ]]; then
+      exec /usr/bin/systemctl status fail2ban --no-pager -l
+    fi
+    exec /usr/bin/systemctl "$sub" fail2ban
+    ;;
+  fail2ban-ban-ip)
+    jail="${1:-}"
+    ip="${2:-}"
+    [[ -n "$jail" && -n "$ip" ]] || { echo "jail and ip are required" >&2; exit 2; }
+    exec /usr/bin/fail2ban-client set "$jail" banip "$ip"
+    ;;
+  fail2ban-unban-ip)
+    jail="${1:-}"
+    ip="${2:-}"
+    [[ -n "$jail" && -n "$ip" ]] || { echo "jail and ip are required" >&2; exit 2; }
+    exec /usr/bin/fail2ban-client set "$jail" unbanip "$ip"
+    ;;
   grant-docker-access)
     if ! getent group docker >/dev/null 2>&1; then
       echo "docker group not found" >&2
@@ -629,6 +666,7 @@ case "$ACTION" in
     exit 64
     ;;
 esac
+
 ROOTHELPEOF
   sudo sed -i "s|__SERVICE_USER__|$(id -un)|g" "$ROOT_HELPER_PATH"
   sudo chown root:root "$ROOT_HELPER_PATH"
