@@ -55,6 +55,7 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     'last_backup_size_mb': '0',
     'dashboard_autorefresh': 'true',
     'manual_services_json': '[]',
+    'fail2ban_alerts_enabled': 'true',
 }
 
 
