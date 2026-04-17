@@ -65,7 +65,7 @@ def info_detail_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def settings_keyboard(settings: Dict[str, str]) -> InlineKeyboardMarkup:
+def settings_keyboard(settings: Dict[str, str], fail2ban_available: bool = False) -> InlineKeyboardMarkup:
     report = '✅' if settings.get('enable_daily_report') == 'true' else '❌'
     traffic = (
         '∞'
@@ -86,8 +86,6 @@ def settings_keyboard(settings: Dict[str, str]) -> InlineKeyboardMarkup:
                 f'SSD порог: {settings.get("disk_threshold", "90")}% ',
                 callback_data='set_disk_threshold',
             )],
-            [InlineKeyboardButton('💾 Хранилище', callback_data='storage_info')],
-            [InlineKeyboardButton('🧹 Очистка диска', callback_data='disk_cleanup_confirm')],
             [InlineKeyboardButton(
                 f'Ежедневный отчёт: {report}',
                 callback_data='toggle_daily_report',
@@ -99,6 +97,10 @@ def settings_keyboard(settings: Dict[str, str]) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(
                 f'Лимит трафика: {traffic}',
                 callback_data='traffic_menu',
+            )],
+            [InlineKeyboardButton(
+                '🛡 Fail2Ban' if fail2ban_available else '🛡 Fail2Ban (не установлен)',
+                callback_data='fail2ban_menu' if fail2ban_available else 'fail2ban_unavailable',
             )],
             [InlineKeyboardButton('Ключевые сервисы', callback_data='service_monitor_menu')],
             [InlineKeyboardButton('Обновить сервер', callback_data='system_update_check')],
@@ -444,3 +446,32 @@ def prosody_user_actions_keyboard(jid: str, back_target: str = 'prosody_list_men
         [InlineKeyboardButton('🗑 Удалить клиента', callback_data=f'prosody_delete_confirm:{jid}')],
         [InlineKeyboardButton('◀️ Назад', callback_data=back_target), InlineKeyboardButton('🏠 Главное меню', callback_data='menu')],
     ])
+
+
+def fail2ban_keyboard(installed: bool, active: bool, alerts_enabled: bool) -> InlineKeyboardMarkup:
+    status_label = '🔄 Статус' if installed else '🔄 Проверить'
+    toggle_label = f'Уведомления: {"✅" if alerts_enabled else "❌"}'
+    keyboard: List[List[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(status_label, callback_data='fail2ban_refresh')],
+    ]
+    if installed:
+        keyboard.extend(
+            [
+                [
+                    InlineKeyboardButton('▶️ Start', callback_data='fail2ban_start'),
+                    InlineKeyboardButton('🔁 Restart', callback_data='fail2ban_restart'),
+                ],
+                [InlineKeyboardButton('⏹ Stop', callback_data='fail2ban_stop')],
+                [InlineKeyboardButton('🚫 Бан-лист', callback_data='fail2ban_bans')],
+                [
+                    InlineKeyboardButton('⛔ Забанить IP', callback_data='fail2ban_prompt_ban'),
+                    InlineKeyboardButton('♻️ Разбанить IP', callback_data='fail2ban_prompt_unban'),
+                ],
+                [InlineKeyboardButton(toggle_label, callback_data='fail2ban_toggle_alerts')],
+            ]
+        )
+    keyboard.append([
+        InlineKeyboardButton('◀️ Назад', callback_data='settings_menu'),
+        InlineKeyboardButton('🏠 Главное меню', callback_data='menu'),
+    ])
+    return InlineKeyboardMarkup(keyboard)
