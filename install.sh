@@ -499,6 +499,22 @@ lua_escape() {
   printf '%s' "$src"
 }
 
+service_user() {
+  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER:-}" != "root" ]]; then
+    printf '%s' "$SUDO_USER"
+    return 0
+  fi
+  if command -v logname >/dev/null 2>&1; then
+    local ln
+    ln="$(logname 2>/dev/null || true)"
+    if [[ -n "$ln" && "$ln" != "root" ]]; then
+      printf '%s' "$ln"
+      return 0
+    fi
+  fi
+  printf '%s' "root"
+}
+
 case "$ACTION" in
   apt-update)
     exec /usr/bin/apt-get update
@@ -553,13 +569,49 @@ case "$ACTION" in
     password="$(lua_escape "$password")"
     exec /usr/bin/prosodyctl shell "user:password(\"$jid\", \"$password\")"
     ;;
+  cleanup-disk-safe)
+    threshold_days="${1:-180}"
+    [[ "$threshold_days" =~ ^[0-9]+$ ]] || { echo "threshold_days must be integer" >&2; exit 2; }
+
+    before_kb="$(/bin/df -Pk / | /usr/bin/awk 'NR==2 {print $4}')"
+    tmp_deleted=0
+    cache_deleted=0
+    log_deleted=0
+    crash_deleted=0
+
+    /usr/bin/apt-get clean >/dev/null 2>&1 || true
+    /usr/bin/apt-get autoclean -y >/dev/null 2>&1 || true
+    /usr/bin/journalctl --vacuum-time="${threshold_days}d" >/dev/null 2>&1 || true
+
+    while IFS= read -r -d '' file; do
+      /bin/rm -f -- "$file" && tmp_deleted=$((tmp_deleted + 1))
+    done < <(/usr/bin/find /tmp /var/tmp -xdev -type f -mtime +14 -print0 2>/dev/null)
+
+    while IFS= read -r -d '' dir; do
+      /bin/rmdir --ignore-fail-on-non-empty -- "$dir" >/dev/null 2>&1 || true
+    done < <(/usr/bin/find /tmp /var/tmp -xdev -depth -type d -empty -mtime +14 -print0 2>/dev/null)
+
+    while IFS= read -r -d '' file; do
+      /bin/rm -f -- "$file" && cache_deleted=$((cache_deleted + 1))
+    done < <(/usr/bin/find /var/cache -xdev -type f -mtime +"$threshold_days" \( -name '*.tmp' -o -name '*.temp' -o -name '*.old' -o -name '*.bak' -o -name '*.cache' \) -print0 2>/dev/null)
+
+    while IFS= read -r -d '' file; do
+      /bin/rm -f -- "$file" && log_deleted=$((log_deleted + 1))
+    done < <(/usr/bin/find /var/log -xdev -type f -mtime +"$threshold_days" \( -name '*.gz' -o -name '*.old' -o -name '*.log.*' -o -regex '.*/[^/]+\.[0-9]+' \) -print0 2>/dev/null)
+
+    while IFS= read -r -d '' file; do
+      /bin/rm -f -- "$file" && crash_deleted=$((crash_deleted + 1))
+    done < <(/usr/bin/find /var/crash -xdev -type f -mtime +"$threshold_days" -print0 2>/dev/null)
+
+    after_kb="$(/bin/df -Pk / | /usr/bin/awk 'NR==2 {print $4}')"
+    freed_kb=$((after_kb - before_kb))
+    if (( freed_kb < 0 )); then freed_kb=0; fi
+    printf 'tmp_files_deleted=%s\ncache_files_deleted=%s\nold_logs_deleted=%s\ncrash_files_deleted=%s\nfreed_kb=%s\n' \
+      "$tmp_deleted" "$cache_deleted" "$log_deleted" "$crash_deleted" "$freed_kb"
+    ;;
   fail2ban-status-json)
     exec /usr/bin/python3 - <<'PY'
-import json
-import os
-import re
-import shutil
-import subprocess
+import json, os, re, shutil, subprocess
 
 def run(cmd):
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -571,26 +623,18 @@ installed = any([
     os.path.exists('/etc/systemd/system/fail2ban.service'),
     os.path.exists('/lib/systemd/system/fail2ban.service'),
 ])
-payload = {
-    'installed': installed,
-    'active': False,
-    'enabled': False,
-    'jails': [],
-    'bans': {},
-    'total_banned': 0,
-    'error': '',
-}
+payload = {'installed': installed, 'active': False, 'enabled': False, 'jails': [], 'bans': {}, 'total_banned': 0, 'error': ''}
 if not installed:
     print(json.dumps(payload, ensure_ascii=False))
     raise SystemExit(0)
 
-_, out, err = run(['/usr/bin/systemctl', 'is-active', 'fail2ban'])
+_, out, _ = run(['/usr/bin/systemctl', 'is-active', 'fail2ban'])
 payload['active'] = (out == 'active')
-_, out, err = run(['/usr/bin/systemctl', 'is-enabled', 'fail2ban'])
+_, out, _ = run(['/usr/bin/systemctl', 'is-enabled', 'fail2ban'])
 payload['enabled'] = (out == 'enabled')
 
 if payload['active']:
-    code, out, err = run(['fail2ban-client', 'status'])
+    code, out, err = run(['/usr/bin/fail2ban-client', 'status'])
     raw = out or err
     if code != 0:
         payload['error'] = raw or 'status failed'
@@ -599,7 +643,7 @@ if payload['active']:
         if m:
             payload['jails'] = [item.strip() for item in m.group(1).split(',') if item.strip()]
         for jail in payload['jails']:
-            code, out, err = run(['fail2ban-client', 'status', jail])
+            code, out, err = run(['/usr/bin/fail2ban-client', 'status', jail])
             txt = out or err
             if code != 0:
                 continue
@@ -607,8 +651,7 @@ if payload['active']:
             if m_count:
                 payload['total_banned'] += int(m_count.group(1))
             m_ips = re.search(r'Banned IP list:\s*(.*)', txt)
-            ips = m_ips.group(1).split() if m_ips else []
-            payload['bans'][jail] = ips
+            payload['bans'][jail] = m_ips.group(1).split() if m_ips else []
 
 print(json.dumps(payload, ensure_ascii=False))
 PY
@@ -636,12 +679,93 @@ PY
     [[ -n "$jail" && -n "$ip" ]] || { echo "jail and ip are required" >&2; exit 2; }
     exec /usr/bin/fail2ban-client set "$jail" unbanip "$ip"
     ;;
+  fail2ban-config-json)
+    exec /usr/bin/python3 - <<'PY'
+import configparser, json, os
+cfg = configparser.ConfigParser(interpolation=None)
+cfg.optionxform = str
+cfg.read([p for p in ['/etc/fail2ban/jail.conf', '/etc/fail2ban/jail.local'] if os.path.exists(p)])
+result = {
+    'installed': os.path.isdir('/etc/fail2ban') or os.path.exists('/etc/systemd/system/fail2ban.service') or os.path.exists('/lib/systemd/system/fail2ban.service'),
+    'path': '/etc/fail2ban/jail.local',
+    'exists': os.path.exists('/etc/fail2ban/jail.local'),
+    'available_sections': sorted(cfg.sections()),
+    'sections': {'DEFAULT': {}, 'sshd': {}},
+    'error': '',
+}
+for section, option in [('DEFAULT','bantime'),('DEFAULT','findtime'),('DEFAULT','maxretry'),('DEFAULT','ignoreip'),('sshd','enabled'),('sshd','port'),('sshd','logpath')]:
+    try:
+        value = cfg.defaults().get(option, '') if section == 'DEFAULT' else cfg.get(section, option, fallback='')
+    except Exception:
+        value = ''
+    if value != '':
+        result['sections'].setdefault(section, {})[option] = str(value)
+print(json.dumps(result, ensure_ascii=False))
+PY
+    ;;
+  fail2ban-config-set)
+    section="${1:-}"
+    option="${2:-}"
+    value="${3:-}"
+    [[ -n "$section" && -n "$option" && -n "$value" ]] || { echo "section, option and value are required" >&2; exit 2; }
+    exec /usr/bin/python3 - "$section" "$option" "$value" <<'PY'
+import configparser, json, os, shutil, subprocess, sys, time
+section, option, value = sys.argv[1], sys.argv[2], sys.argv[3]
+path = '/etc/fail2ban/jail.local'
+backup_path = f'{path}.bak.{time.strftime("%Y%m%d-%H%M%S")}'
+if os.path.exists(path):
+    shutil.copy2(path, backup_path)
+else:
+    backup_path = ''
+
+cfg = configparser.ConfigParser(interpolation=None)
+cfg.optionxform = str
+cfg.read([p for p in ['/etc/fail2ban/jail.conf', path] if os.path.exists(p)])
+
+if section != 'DEFAULT' and not cfg.has_section(section):
+    cfg.add_section(section)
+if section == 'DEFAULT':
+    cfg['DEFAULT'][option] = value
+else:
+    cfg.set(section, option, value)
+
+write_cfg = configparser.ConfigParser(interpolation=None)
+write_cfg.optionxform = str
+for k, v in cfg.defaults().items():
+    if v != '':
+        write_cfg['DEFAULT'][k] = v
+for sec in cfg.sections():
+    write_cfg.add_section(sec)
+    for k, v in cfg.items(sec, raw=True):
+        if k == '__name__':
+            continue
+        if v != '':
+            write_cfg.set(sec, k, v)
+with open(path, 'w', encoding='utf-8') as fh:
+    write_cfg.write(fh)
+
+proc = subprocess.run(['/usr/bin/systemctl', 'restart', 'fail2ban'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+if proc.returncode != 0:
+    if backup_path:
+        shutil.copy2(backup_path, path)
+    else:
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+    subprocess.run(['/usr/bin/systemctl', 'restart', 'fail2ban'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    print((proc.stderr or proc.stdout or 'failed to restart fail2ban').strip())
+    raise SystemExit(1)
+
+print(json.dumps({'ok': True, 'path': path, 'backup_path': backup_path, 'section': section, 'option': option, 'value': value}, ensure_ascii=False))
+PY
+    ;;
   grant-docker-access)
     if ! getent group docker >/dev/null 2>&1; then
       echo "docker group not found" >&2
       exit 1
     fi
-    /usr/sbin/usermod -aG docker "__SERVICE_USER__"
+    /usr/sbin/usermod -aG docker "$(service_user)"
     exec /usr/bin/systemctl restart "$SERVICE_NAME"
     ;;
   reboot-host)
@@ -666,7 +790,6 @@ PY
     exit 64
     ;;
 esac
-
 ROOTHELPEOF
   sudo sed -i "s|__SERVICE_USER__|$(id -un)|g" "$ROOT_HELPER_PATH"
   sudo chown root:root "$ROOT_HELPER_PATH"
